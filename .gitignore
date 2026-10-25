@@ -3,3 +3,4 @@ build/
 vcpkg-bincache/
 vcpkg_installed/
 out/
+dist/
