@@ -40,6 +40,7 @@ jobs:
     steps:
       - name: Install toolchain (Alpine)
         if: ${{ matrix.name == 'linux-static' }}
+        shell: sh
         run: |
           apk add --no-cache build-base cmake ninja git curl zip unzip tar \
                              perl linux-headers bash ca-certificates
