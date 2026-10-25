@@ -99,7 +99,9 @@ tg-bot/
 - macos-arm64 / windows-x64：官方 runner + vcpkg 静态 triplet（Windows 额外 /MT）
 
 验收结果（v0.1.1）：`ldd` → "not a dynamic executable"；musl 静态二进制
-在 glibc Ubuntu 上直接运行成功；strip 后约 4 MB ≤ 5 MB 预算。
+在 glibc Ubuntu 上直接运行成功；strip 后二进制 8.2 MB（压缩包 3.3 MB）。
+说明：5 MB 预算低估了静态 OpenSSL（libcrypto 全算法集本身就 ~5 MB），
+8 MB 级是纯静态 + TLS 的正常体积（可参考静态编译的 Go 程序 ~7–9 MB）。
 
 **CI 踩坑记录**（全部已修，见 git 历史）：
 1. Alpine 无 bash → 安装步骤显式 `shell: sh`
