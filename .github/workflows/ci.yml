@@ -7,6 +7,8 @@ on:
 env:
   # vcpkg 二进制缓存目录（各平台共用，配合 actions/cache 加速）
   VCPKG_BINARY_SOURCES: files,${{ github.workspace }}/vcpkg-bincache,readwrite
+  # Alpine(musl) 上 vcpkg 官方 cmake 4.4.3 是 glibc 预编译版跑不了，强制用系统工具链
+  VCPKG_FORCE_SYSTEM_BINARIES: "1"
 
 jobs:
   build:
@@ -20,7 +22,7 @@ jobs:
           # Linux：在 Alpine 容器里用 musl 工具链编译，产出全静态二进制
           - name: linux-static
             os: ubuntu-latest
-            container: alpine:3.20
+            container: alpine:3.22
             triplet: x64-linux-musl
           - name: macos-arm64
             os: macos-latest

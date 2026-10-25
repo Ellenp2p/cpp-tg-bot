@@ -7,6 +7,8 @@ on:
 
 env:
   VCPKG_BINARY_SOURCES: files,${{ github.workspace }}/vcpkg-bincache,readwrite
+  # Alpine(musl) 上 vcpkg 官方 cmake 4.4.3 是 glibc 预编译版跑不了，强制用系统工具链
+  VCPKG_FORCE_SYSTEM_BINARIES: "1"
 
 permissions:
   contents: write
@@ -22,7 +24,7 @@ jobs:
         include:
           - name: linux-static
             os: ubuntu-latest
-            container: alpine:3.20
+            container: alpine:3.22
             triplet: x64-linux-musl
             artifact: linux-x86_64-static
           - name: macos-arm64
