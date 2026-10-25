@@ -88,18 +88,26 @@ tg-bot/
 - 优雅退出：SIGINT/SIGTERM 停 io_context
 - 验收：连续运行 24h 无内存泄漏（可用 `valgrind --leak-check=summary` 抽查）
 
-### M5：静态化交付（1 天）
+### M5：静态化交付（1 天）—— ✅ 已完成
 
-路线（二选一，先试 A）：
+实际路线：**GitHub Actions（release.yml）三平台矩阵**，推 `v*` tag 自动出产物：
 
-- **A. 本机 vcpkg musl triplet**：
-  `vcpkg install --triplet=x64-linux-musl`，CMake 配
-  `VCPKG_TARGET_TRIPLET=x64-linux-musl` + `-static -static-libgcc -static-libstdc++`
-  产出 `ldd` 显示 "not a dynamic executable"
-- **B. Docker（推荐作为 CI/最终交付）**：Alpine 容器内 `apk add` 依赖后编译，
-  产物拷出；本机无需装 musl 工具链
+- linux-static：`alpine:3.22` 容器（job container 直接构建，无 DinD）+
+  overlay triplet `triplets/x64-linux-musl.cmake`（vcpkg 已移除内置 musl triplet）+
+  `VCPKG_FORCE_SYSTEM_BINARIES=1`（vcpkg 官方 cmake 4.4.3 是 glibc 版，musl 跑不了）
+  + `pkgconf`（`vcpkg_fixup_pkgconfig` 需要）+ `-static` + strip
+- macos-arm64 / windows-x64：官方 runner + vcpkg 静态 triplet（Windows 额外 /MT）
 
-- 验收：单文件二进制 ≤ 5 MB，在干净 Linux（如 `ubuntu:latest` 容器）里运行成功
+验收结果（v0.1.1）：`ldd` → "not a dynamic executable"；musl 静态二进制
+在 glibc Ubuntu 上直接运行成功；strip 后约 4 MB ≤ 5 MB 预算。
+
+**CI 踩坑记录**（全部已修，见 git 历史）：
+1. Alpine 无 bash → 安装步骤显式 `shell: sh`
+2. 容器内不能再 `docker run`（无 DinD）→ 直接在 job container 里构建
+3. `Invalid triplet: x64-linux-musl` → 仓库自带 overlay triplet
+4. vcpkg 下载 glibc 版 cmake 在 musl 上无法运行 → `VCPKG_FORCE_SYSTEM_BINARIES`
+5. nlohmann-json 构建失败 → 补装 `pkgconf`
+6. 二进制 12 MB（含 debug info）→ 打包前 `strip`
 
 ## 4. 已知坑（按踩坑概率排序）
 

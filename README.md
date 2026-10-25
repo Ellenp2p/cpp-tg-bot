@@ -9,7 +9,7 @@ C++20 + Boost.Asio 协程实现的异步 Telegram Bot。目标是产出可在任
 - [x] M2：Bot API 封装（`apiCall` 统一入口 / 429+5xx 退避重试 / `TelegramApiError`）
 - [x] M3：长轮询 + 每 update 协程派发（echobot，`/start` + 回声）
 - [x] M4：指数退避重连、429 retry_after 限速、inline 键盘/回调、Ctrl+C 优雅退出
-- [ ] M5：musl 全静态交付（进行中：WSL Ubuntu 本机构建）
+- [x] M5：musl 全静态交付（CI 三平台 release：linux-x86_64-static / macos-arm64 / windows-x86_64，ldd 全静态，strip 后约 4 MB）
 
 ## 踩坑记录（协程必读）
 
