@@ -96,6 +96,7 @@ jobs:
           if [ "${{ runner.os }}" = "Windows" ]; then
             cp build/Release/tg_bot.exe dist/tg-bot/
           else
+            strip build/tg_bot
             cp build/tg_bot dist/tg-bot/
           fi
           # Windows 产物需要带上 CA bundle（已自动复制到 exe 旁）
