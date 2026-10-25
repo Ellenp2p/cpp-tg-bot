@@ -40,7 +40,7 @@ jobs:
         shell: sh
         run: |
           apk add --no-cache build-base cmake ninja git curl zip unzip tar \
-                             perl linux-headers bash ca-certificates
+                             perl linux-headers bash ca-certificates pkgconf
 
       - uses: actions/checkout@v4
 
