@@ -1,0 +1,118 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  VCPKG_BINARY_SOURCES: files,${{ github.workspace }}/vcpkg-bincache,readwrite
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: release (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-static
+            os: ubuntu-latest
+            container: alpine:3.20
+            triplet: x64-linux-musl
+            artifact: linux-x86_64-static
+          - name: macos-arm64
+            os: macos-latest
+            triplet: arm64-osx
+            artifact: macos-arm64
+          - name: windows-x64
+            os: windows-latest
+            triplet: x64-windows-static
+            artifact: windows-x86_64
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Install toolchain (Alpine)
+        if: ${{ matrix.name == 'linux-static' }}
+        run: |
+          apk add --no-cache build-base cmake ninja git curl zip unzip tar \
+                             perl linux-headers bash ca-certificates
+
+      - uses: actions/checkout@v4
+
+      - name: Enable long paths (Windows)
+        if: ${{ runner.os == 'Windows' }}
+        run: git config --global core.longpaths true
+
+      - name: Cache vcpkg binary cache
+        uses: actions/cache@v4
+        with:
+          path: vcpkg-bincache
+          key: vcpkg-${{ matrix.triplet }}-${{ hashFiles('vcpkg.json') }}
+
+      - name: Build in Alpine container (musl, fully static)
+        if: ${{ matrix.name == 'linux-static' }}
+        run: |
+          mkdir -p vcpkg-bincache
+          docker run --rm \
+            -v "$PWD:/src" \
+            -v "$PWD/vcpkg-bincache:/bincache" \
+            -e VCPKG_BINARY_SOURCES="files,/bincache,readwrite" \
+            alpine:3.20 sh -c '
+              apk add --no-cache build-base cmake ninja git curl zip unzip tar \
+                                 perl linux-headers bash ca-certificates
+              git clone --depth 1 https://github.com/microsoft/vcpkg.git /opt/vcpkg
+              /opt/vcpkg/bootstrap-vcpkg.sh -disableMetrics
+              cmake -S /src -B /src/build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_TOOLCHAIN_FILE=/opt/vcpkg/scripts/buildsystems/vcpkg.cmake \
+                -DVCPKG_TARGET_TRIPLET=x64-linux-musl \
+                -DTB_STATIC=ON
+              cmake --build /src/build
+            '
+
+      - name: Get vcpkg (macOS / Windows)
+        if: ${{ matrix.name != 'linux-static' }}
+        run: |
+          git clone --depth 1 https://github.com/microsoft/vcpkg.git .vcpkg
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            ./.vcpkg/bootstrap-vcpkg.bat -disableMetrics
+          else
+            ./.vcpkg/bootstrap-vcpkg.sh -disableMetrics
+          fi
+
+      - name: Build (macOS / Windows)
+        if: ${{ matrix.name != 'linux-static' }}
+        run: |
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE="$PWD/.vcpkg/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }}
+          cmake --build build --config Release
+
+      - name: Package
+        run: |
+          mkdir -p dist/tg-bot
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cp build/Release/tg_bot.exe dist/tg-bot/
+          else
+            cp build/tg_bot dist/tg-bot/
+          fi
+          # Windows 产物需要带上 CA bundle（已自动复制到 exe 旁）
+          if [ -f build/Release/cacert.pem ]; then
+            cp build/Release/cacert.pem dist/tg-bot/
+          elif [ -f build/cacert.pem ]; then
+            cp build/cacert.pem dist/tg-bot/
+          fi
+          tar -czf "dist/tg-bot-${{ matrix.artifact }}.tar.gz" -C dist tg-bot
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.tar.gz
+          generate_release_notes: true

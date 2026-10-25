@@ -1,0 +1,12 @@
+{
+  "name": "tg-bot",
+  "version-string": "0.1.0",
+  "description": "Async Telegram bot in C++20 with Boost.Asio coroutines",
+  "dependencies": [
+    "boost-asio",
+    "boost-beast",
+    "openssl",
+    "nlohmann-json",
+    "spdlog"
+  ]
+}
