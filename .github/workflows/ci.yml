@@ -52,27 +52,18 @@ jobs:
           path: vcpkg-bincache
           key: vcpkg-${{ matrix.triplet }}-${{ hashFiles('vcpkg.json') }}
 
-      - name: Build in Alpine container (musl, fully static)
+      - name: Build (musl, fully static)
         if: ${{ matrix.name == 'linux-static' }}
         run: |
-          mkdir -p vcpkg-bincache
-          docker run --rm \
-            -v "$PWD:/src" \
-            -v "$PWD/vcpkg-bincache:/bincache" \
-            -e VCPKG_BINARY_SOURCES="files,/bincache,readwrite" \
-            alpine:3.20 sh -c '
-              apk add --no-cache build-base cmake ninja git curl zip unzip tar \
-                                 perl linux-headers bash ca-certificates
-              git clone --depth 1 https://github.com/microsoft/vcpkg.git /opt/vcpkg
-              /opt/vcpkg/bootstrap-vcpkg.sh -disableMetrics
-              cmake -S /src -B /src/build -G Ninja -DCMAKE_BUILD_TYPE=Release \
-                -DCMAKE_TOOLCHAIN_FILE=/opt/vcpkg/scripts/buildsystems/vcpkg.cmake \
-                -DVCPKG_TARGET_TRIPLET=x64-linux-musl \
-                -DTB_STATIC=ON
-              cmake --build /src/build
-              echo "=== linkage check ==="
-              ldd /src/build/tg_bot || echo "fully static"
-            '
+          git clone --depth 1 https://github.com/microsoft/vcpkg.git .vcpkg
+          ./.vcpkg/bootstrap-vcpkg.sh -disableMetrics
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE="$PWD/.vcpkg/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_TARGET_TRIPLET=x64-linux-musl \
+            -DTB_STATIC=ON
+          cmake --build build
+          echo "=== linkage check ==="
+          ldd build/tg_bot || echo "fully static"
 
       - name: Get vcpkg (macOS / Windows)
         if: ${{ matrix.name != 'linux-static' }}
