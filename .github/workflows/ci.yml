@@ -59,6 +59,7 @@ jobs:
           ./.vcpkg/bootstrap-vcpkg.sh -disableMetrics
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_TOOLCHAIN_FILE="$PWD/.vcpkg/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_OVERLAY_TRIPLETS="$PWD/triplets" \
             -DVCPKG_TARGET_TRIPLET=x64-linux-musl \
             -DTB_STATIC=ON
           cmake --build build
