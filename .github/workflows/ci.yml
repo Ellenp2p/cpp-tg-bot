@@ -5,9 +5,9 @@ on:
   pull_request:
 
 env:
-  # vcpkg 二进制缓存目录（各平台共用，配合 actions/cache 加速）
-  VCPKG_BINARY_SOURCES: files,${{ github.workspace }}/vcpkg-bincache,readwrite
-  # Alpine(musl) 上 vcpkg 官方 cmake 4.4.3 是 glibc 预编译版跑不了，强制用系统工具链
+  # Alpine(musl) 上 vcpkg 官方 cmake 是 glibc 预编译版跑不了，强制用系统工具链
+  # 注意：VCPKG_BINARY_SOURCES 不在此设置——container job 不翻译 env 里的
+  # 主机路径，统一在 step 里用 $GITHUB_WORKSPACE 设置（见 Set bincache path）
   VCPKG_FORCE_SYSTEM_BINARIES: "1"
 
 jobs:
@@ -43,6 +43,9 @@ jobs:
                              perl linux-headers bash ca-certificates pkgconf
 
       - uses: actions/checkout@v4
+
+      - name: Set bincache path
+        run: echo "VCPKG_BINARY_SOURCES=files,$GITHUB_WORKSPACE/vcpkg-bincache,readwrite" >> "$GITHUB_ENV"
 
       - name: Enable long paths (Windows)
         if: ${{ runner.os == 'Windows' }}
