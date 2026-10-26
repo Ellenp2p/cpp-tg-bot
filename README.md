@@ -103,12 +103,14 @@ export TG_BOT_TOKEN=<你的token> && ./build/group_admin
 - 每次 push / PR 跑 [CI](.github/workflows/ci.yml)，三平台矩阵：
   - `linux-static`：Alpine 容器内 musl 工具链，**全静态二进制**
   - `macos-arm64`、`windows-x64`（静态 CRT + vcpkg 静态 triplet）
-- 打 tag 触发 [Release](.github/workflows/release.yml)，自动打包三平台产物并发布。
-  tag 规则：
-  - `group_admin-v0.0.1` / `echo_bot-v0.0.1` —— 只发布对应机器人，各自一个 release
-  - `v0.2.0` —— 全部机器人
-  - 产物命名：`<bot>-<platform>.tar.gz`（Linux/macOS，保留可执行权限 + cacert.pem）
-    或 `<bot>-<platform>.exe`（Windows，下载即跑）
+- 发布触发 [Release](.github/workflows/release.yml)，两种方式：
+  - **手动（推荐）**：Actions → Release → Run workflow，选择机器人
+    （group_admin / echo_bot / both）+ 版本号即可，不用手打 tag
+  - **打 tag**：`group_admin-v0.0.1` / `echo_bot-v0.0.1` 只发对应机器人，
+    `v0.2.0` 发全部
+- 只编译目标机器人（tgbot 库作为依赖自动编，另一个示例不编）；
+  产物命名：`<bot>-<platform>.tar.gz`（Linux/macOS，保留可执行权限 + cacert.pem）
+  或 `<bot>-<platform>.exe`（Windows，下载即跑）
 - **依赖预编译**：框架源码独立维护在 [Ellenp2p/tgbot](https://github.com/Ellenp2p/tgbot)，
   其 deps CI 每日检查上游、且**只在我们依赖的 port（openssl / sqlite3 /
   spdlog / fmt / nlohmann-json / boost-*）有更新时才重编**，
