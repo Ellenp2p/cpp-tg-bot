@@ -82,7 +82,7 @@ endif()
 option(TGBOT_BUILD_EXAMPLES "Build example bots" ON)
 if(TGBOT_BUILD_EXAMPLES)
     # echo 演示：回声 / /start / inline 键盘
-    add_executable(echo_bot examples/echo/main.cpp)
+    add_executable(echo_bot examples/echo_bot/main.cpp)
     target_link_libraries(echo_bot PRIVATE tgbot)
     if(EXISTS "${TGBOT_CACERT_PATH}")
         add_custom_command(TARGET echo_bot POST_BUILD

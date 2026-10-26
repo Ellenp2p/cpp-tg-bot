@@ -4,6 +4,20 @@ on:
   push:
     tags:
       - '*'
+  # 手动入口：Actions 页面选择要发布的机器人和版本号，不用手打 tag
+  workflow_dispatch:
+    inputs:
+      bot:
+        description: 要发布哪个机器人
+        required: true
+        type: choice
+        options:
+          - group_admin
+          - echo_bot
+          - both
+      version:
+        description: 版本号（如 0.0.1，会生成 tag <bot>-v<version> 或 v<version>）
+        required: true
 
 env:
   # Alpine(musl) 上 vcpkg 官方 cmake 4.4.3 是 glibc 预编译版跑不了，强制用系统工具链
@@ -53,26 +67,42 @@ jobs:
       - name: Set bincache path
         run: echo "VCPKG_BINARY_SOURCES=files,$GITHUB_WORKSPACE/vcpkg-bincache,readwrite" >> "$GITHUB_ENV"
 
-      # 从 tag 解析要发布的机器人：
-      #   group_admin-v0.0.1 / echo_bot-v0.0.1  → 只发该机器人
-      #   v0.2.0                                  → 全部机器人
-      - name: Resolve bots from tag
+      # 解析要发布的机器人与 tag，两种入口统一：
+      #   push tag:  group_admin-v0.0.1 / echo_bot-v0.0.1 → 单个；v0.2.0 → 全部
+      #   手动触发:  inputs.bot + inputs.version
+      - name: Resolve release target
         id: meta
         run: |
-          tag=${GITHUB_REF#refs/tags/}
-          echo "tag=$tag"
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          case "$tag" in
-            v*) echo "bots=echo_bot group_admin" >> "$GITHUB_OUTPUT" ;;
-            *)
-              bot=${tag%%-v*}
-              if [ ! -f "examples/$bot/main.cpp" ]; then
-                echo "unknown bot '$bot' in tag '$tag'"
-                exit 1
-              fi
-              echo "bots=$bot" >> "$GITHUB_OUTPUT"
-              ;;
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            bot="${{ inputs.bot }}"
+            ver="${{ inputs.version }}"
+          else
+            ref="${GITHUB_REF#refs/tags/}"
+            case "$ref" in
+              v*) bot="both"; ver="${ref#v}" ;;
+              *)  bot="${ref%%-v*}"; ver="${ref##*-v}" ;;
+            esac
+          fi
+
+          if [ -z "$ver" ] || [ "$ver" = "$bot" ]; then
+            echo "invalid version '$ver'"
+            exit 1
+          fi
+          case "$bot" in
+            both) bots="echo_bot group_admin" ;;
+            *)    bots="$bot" ;;
           esac
+          for b in $bots; do
+            if [ ! -f "examples/$b/main.cpp" ]; then
+              echo "unknown bot '$b'"
+              exit 1
+            fi
+          done
+
+          if [ "$bot" = "both" ]; then tag="v$ver"; else tag="${bot}-v$ver"; fi
+          echo "bots=$bots  tag=$tag"
+          echo "bots=$bots" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
       - name: Enable long paths (Windows)
         if: ${{ runner.os == 'Windows' }}
@@ -109,7 +139,8 @@ jobs:
             -DVCPKG_OVERLAY_TRIPLETS="$PWD/triplets" \
             -DVCPKG_TARGET_TRIPLET=x64-linux-musl \
             -DTGBOT_STATIC=ON
-          cmake --build build
+          # 只编译目标机器人（tgbot 库作为依赖自动编，另一个示例不编）
+          cmake --build build --target ${{ steps.meta.outputs.bots }}
 
       - name: Get vcpkg (macOS / Windows)
         if: ${{ matrix.name != 'linux-static' }}
@@ -133,7 +164,8 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_TOOLCHAIN_FILE="$PWD/.vcpkg/scripts/buildsystems/vcpkg.cmake" \
             -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }}
-          cmake --build build --config Release
+          # 只编译目标机器人（tgbot 库作为依赖自动编，另一个示例不编）
+          cmake --build build --config Release --target ${{ steps.meta.outputs.bots }}
 
       # 打包：Windows 直接传 exe + cacert.pem（下载即跑）；
       # Linux/macOS 打 tar.gz（保留可执行权限，cacert.pem 一并打包）
