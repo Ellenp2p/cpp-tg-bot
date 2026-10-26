@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     tags:
-      - 'v*'
+      - '*'
 
 env:
   VCPKG_BINARY_SOURCES: files,${{ github.workspace }}/vcpkg-bincache,readwrite
@@ -48,6 +48,27 @@ jobs:
                              perl linux-headers bash ca-certificates pkgconf
 
       - uses: actions/checkout@v4
+
+      # 从 tag 解析要发布的机器人：
+      #   group_admin-v0.0.1 / echo_bot-v0.0.1  → 只发该机器人
+      #   v0.2.0                                  → 全部机器人
+      - name: Resolve bots from tag
+        id: meta
+        run: |
+          tag=${GITHUB_REF#refs/tags/}
+          echo "tag=$tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          case "$tag" in
+            v*) echo "bots=echo_bot group_admin" >> "$GITHUB_OUTPUT" ;;
+            *)
+              bot=${tag%%-v*}
+              if [ ! -f "examples/$bot/main.cpp" ]; then
+                echo "unknown bot '$bot' in tag '$tag'"
+                exit 1
+              fi
+              echo "bots=$bot" >> "$GITHUB_OUTPUT"
+              ;;
+          esac
 
       - name: Enable long paths (Windows)
         if: ${{ runner.os == 'Windows' }}
@@ -110,25 +131,30 @@ jobs:
             -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }}
           cmake --build build --config Release
 
+      # 打包：Windows 直接传 exe + cacert.pem（下载即跑）；
+      # Linux/macOS 打 tar.gz（保留可执行权限，cacert.pem 一并打包）
       - name: Package
         run: |
           mkdir -p dist
-          for bot in echo_bot group_admin; do
-            mkdir -p "dist/$bot"
+          for bot in ${{ steps.meta.outputs.bots }}; do
             if [ "${{ runner.os }}" = "Windows" ]; then
-              cp "build/Release/$bot.exe" "dist/$bot/"
-              # Windows 产物需要带上 CA bundle（构建时已自动复制到 exe 旁）
-              [ -f "build/Release/cacert.pem" ] && cp "build/Release/cacert.pem" "dist/$bot/"
+              cp "build/Release/$bot.exe" "dist/${bot}-${{ matrix.artifact }}.exe"
+              [ -f build/Release/cacert.pem ] && cp build/Release/cacert.pem dist/
             else
+              mkdir -p "dist/$bot"
               strip "build/$bot"
               cp "build/$bot" "dist/$bot/"
               [ -f build/cacert.pem ] && cp build/cacert.pem "dist/$bot/"
+              tar -czf "dist/${bot}-${{ matrix.artifact }}.tar.gz" -C dist "$bot"
+              rm -rf "dist/$bot"
             fi
           done
-          tar -czf "dist/tg-bot-${{ matrix.artifact }}.tar.gz" -C dist echo_bot group_admin
+          ls -la dist/
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*.tar.gz
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: ${{ steps.meta.outputs.tag }}
+          files: dist/*
           generate_release_notes: true
