@@ -110,8 +110,9 @@ export TG_BOT_TOKEN=<你的token> && ./build/group_admin
   - 产物命名：`<bot>-<platform>.tar.gz`（Linux/macOS，保留可执行权限 + cacert.pem）
     或 `<bot>-<platform>.exe`（Windows，下载即跑）
 - **依赖预编译**：框架源码独立维护在 [Ellenp2p/tgbot](https://github.com/Ellenp2p/tgbot)，
-  其 deps CI 每日检查 vcpkg 上游并把预编译 binary cache 发布到
-  [`deps` release](https://github.com/Ellenp2p/tgbot/releases/tag/deps)。
+  其 deps CI 每日检查上游、且**只在我们依赖的 port（openssl / sqlite3 /
+  spdlog / fmt / nlohmann-json / boost-*）有更新时才重编**，
+  预编译 binary cache 发布到 [`deps` release](https://github.com/Ellenp2p/tgbot/releases/tag/deps)。
   本仓库 CI 先拉取 bincache 并检出同一 vcpkg commit（ABI 哈希一致），
   `vcpkg install` 变为秒级恢复；拉取失败自动回退全量编译
 
