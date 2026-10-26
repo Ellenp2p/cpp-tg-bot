@@ -96,7 +96,7 @@ export TG_BOT_TOKEN=<你的token> && ./build/group_admin
 
 看到 `Connected as @<你的bot用户名>` 即启动成功。把它拉进群、设为管理员后，
 群里发 `/sticker on` 开启贴纸 60 秒自动过期，`/sticker off` 关闭
-（仅群管理员可开关，设置存 `group_admin_state.json`）。
+（仅群管理员可开关，设置存 `group_admin_state.db`，SQLite 持久化，重启不丢）。
 
 ## CI / Release
 
@@ -104,7 +104,13 @@ export TG_BOT_TOKEN=<你的token> && ./build/group_admin
   - `linux-static`：Alpine 容器内 musl 工具链，**全静态二进制**
   - `macos-arm64`、`windows-x64`（静态 CRT + vcpkg 静态 triplet）
 - 打 tag（如 `v0.1.0`）触发 [Release](.github/workflows/release.yml)，
-  自动打包三平台产物并发布到 GitHub Releases
+  自动打包三平台产物并发布到 GitHub Releases；每个 tarball 内含
+  `echo_bot/` 与 `group_admin/` 两个独立示例目录
+- **依赖预编译**：框架源码独立维护在 [Ellenp2p/tgbot](https://github.com/Ellenp2p/tgbot)，
+  其 deps CI 每日检查 vcpkg 上游并把预编译 binary cache 发布到
+  [`deps` release](https://github.com/Ellenp2p/tgbot/releases/tag/deps)。
+  本仓库 CI 先拉取 bincache 并检出同一 vcpkg commit（ABI 哈希一致），
+  `vcpkg install` 变为秒级恢复；拉取失败自动回退全量编译
 
 ## 技术栈
 
@@ -115,6 +121,7 @@ export TG_BOT_TOKEN=<你的token> && ./build/group_admin
 | OpenSSL (`ssl::stream`) | TLS，证书链 + 主机名校验 |
 | nlohmann-json | Bot API 的 JSON |
 | spdlog | 日志 |
+| SQLite3 | 状态持久化（`StateStore` 接口，见 `tgbot/state_store.hpp`） |
 | vcpkg | 依赖管理（始终解析仓库内最新版本） |
 
 ## 备注

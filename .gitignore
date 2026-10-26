@@ -4,3 +4,7 @@ vcpkg-bincache/
 vcpkg_installed/
 out/
 dist/
+framework/
+*.db
+*.db-wal
+*.db-shm

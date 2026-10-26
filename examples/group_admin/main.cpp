@@ -2,7 +2,7 @@
 //
 // 功能：开启后，群里任何人发的贴纸会在 60 秒后被自动删除。
 // 控制：群管理员在群里发 /sticker on 开启，/sticker off 关闭；
-//       设置持久化到 group_admin_state.json，重启不丢。
+//       设置持久化到 group_admin_state.db（SQLite），重启不丢。
 //
 // 用法：./group_admin <bot-token>   或   TG_BOT_TOKEN=... ./group_admin
 // 注意：机器人需要被设为群管理员（至少有"删除消息"权限），否则删不掉。
@@ -18,12 +18,9 @@
 
 #include <chrono>
 #include <csignal>
-#include <cstdio>
 #include <cstdlib>
 #include <exception>
-#include <fstream>
 #include <iostream>
-#include <set>
 #include <string>
 
 namespace net = boost::asio;
@@ -33,65 +30,31 @@ using tgbot::BotClient;
 namespace {
 
 constexpr auto kStickerLifetime = std::chrono::seconds{60};
-constexpr const char* kStateFile = "group_admin_state.json";
+constexpr const char* kStateDb = "group_admin_state.db";
 
-// 每个群的开关状态，原子写盘
+// 每个群的开关状态，基于 StateStore 键值存储（SQLite 持久化，重启不丢）
 class GroupState {
 public:
+    explicit GroupState(tgbot::StateStore& store) : store_(store) {}
+
     bool stickerExpireEnabled(std::int64_t chatId) const {
-        return enabledChats_.count(chatId) != 0;
+        return store_.get(key(chatId)).has_value();
     }
 
     void setStickerExpire(std::int64_t chatId, bool enabled) {
         if (enabled) {
-            enabledChats_.insert(chatId);
+            store_.set(key(chatId), "1");
         } else {
-            enabledChats_.erase(chatId);
-        }
-        save();
-    }
-
-    void load() {
-        std::ifstream in(kStateFile);
-        if (!in) {
-            return;
-        }
-        try {
-            const json j = json::parse(in);
-            for (const auto& v : j.value("sticker_expire_chats", json::array())) {
-                if (v.is_number_integer()) {
-                    enabledChats_.insert(v.get<std::int64_t>());
-                }
-            }
-            if (!enabledChats_.empty()) {
-                spdlog::info("loaded {} enabled group(s) from state file",
-                             enabledChats_.size());
-            }
-        } catch (const std::exception& e) {
-            spdlog::warn("state file corrupt, starting fresh: {}", e.what());
+            store_.erase(key(chatId));
         }
     }
 
 private:
-    void save() const {
-        json arr = json::array();
-        for (const auto id : enabledChats_) {
-            arr.push_back(id);
-        }
-        json j;
-        j["sticker_expire_chats"] = std::move(arr);
-        // 原子写：先写临时文件再 rename，中途被杀不会留半截
-        const std::string tmp = std::string(kStateFile) + ".tmp";
-        {
-            std::ofstream out(tmp, std::ios::trunc);
-            if (!(out << j.dump(2) << '\n')) {
-                return;
-            }
-        }
-        std::rename(tmp.c_str(), kStateFile);
+    static std::string key(std::int64_t chatId) {
+        return "sticker_expire:" + std::to_string(chatId);
     }
 
-    std::set<std::int64_t> enabledChats_;
+    tgbot::StateStore& store_;
 };
 
 net::awaitable<bool> isGroupAdmin(BotClient& bot, std::int64_t chatId,
@@ -142,8 +105,8 @@ net::awaitable<void> run(const std::string& token) {
         co_return;
     }
 
-    GroupState state;
-    state.load();
+    tgbot::SqliteStateStore store(kStateDb);
+    GroupState state(store);
 
     tgbot::Dispatcher dispatcher;
 

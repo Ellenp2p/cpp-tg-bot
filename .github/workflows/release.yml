@@ -59,10 +59,25 @@ jobs:
           path: vcpkg-bincache
           key: vcpkg-${{ matrix.triplet }}-${{ hashFiles('vcpkg.json') }}
 
+      # 从框架仓库 Ellenp2p/tgbot 的 deps release 拉预编译依赖，
+      # vcpkg install 变为纯恢复（秒级）。失败自动回退全量编译。
+      - name: Fetch prebuilt vcpkg deps
+        continue-on-error: true
+        run: |
+          base=https://github.com/Ellenp2p/tgbot/releases/download/deps
+          curl -fsSL -o bincache.tar.gz "$base/vcpkg-bincache-${{ matrix.triplet }}.tar.gz"
+          curl -fsSL -o vcpkg-commit.txt "$base/vcpkg-commit.txt"
+          tar xzf bincache.tar.gz
+
       - name: Build (musl, fully static)
         if: ${{ matrix.name == 'linux-static' }}
         run: |
           git clone --depth 1 https://github.com/microsoft/vcpkg.git .vcpkg
+          if [ -f vcpkg-commit.txt ]; then
+            sha=$(cat vcpkg-commit.txt)
+            git -C .vcpkg fetch --depth 1 origin "$sha"
+            git -C .vcpkg checkout --detach "$sha"
+          fi
           ./.vcpkg/bootstrap-vcpkg.sh -disableMetrics
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_TOOLCHAIN_FILE="$PWD/.vcpkg/scripts/buildsystems/vcpkg.cmake" \
@@ -75,6 +90,11 @@ jobs:
         if: ${{ matrix.name != 'linux-static' }}
         run: |
           git clone --depth 1 https://github.com/microsoft/vcpkg.git .vcpkg
+          if [ -f vcpkg-commit.txt ]; then
+            sha=$(cat vcpkg-commit.txt)
+            git -C .vcpkg fetch --depth 1 origin "$sha"
+            git -C .vcpkg checkout --detach "$sha"
+          fi
           if [ "${{ runner.os }}" = "Windows" ]; then
             ./.vcpkg/bootstrap-vcpkg.bat -disableMetrics
           else
@@ -92,20 +112,20 @@ jobs:
 
       - name: Package
         run: |
-          mkdir -p dist/tg-bot
-          if [ "${{ runner.os }}" = "Windows" ]; then
-            cp build/Release/group_admin.exe dist/tg-bot/
-          else
-            strip build/group_admin
-            cp build/group_admin dist/tg-bot/
-          fi
-          # Windows 产物需要带上 CA bundle（已自动复制到 exe 旁）
-          if [ -f build/Release/cacert.pem ]; then
-            cp build/Release/cacert.pem dist/tg-bot/
-          elif [ -f build/cacert.pem ]; then
-            cp build/cacert.pem dist/tg-bot/
-          fi
-          tar -czf "dist/tg-bot-${{ matrix.artifact }}.tar.gz" -C dist tg-bot
+          mkdir -p dist
+          for bot in echo_bot group_admin; do
+            mkdir -p "dist/$bot"
+            if [ "${{ runner.os }}" = "Windows" ]; then
+              cp "build/Release/$bot.exe" "dist/$bot/"
+              # Windows 产物需要带上 CA bundle（构建时已自动复制到 exe 旁）
+              [ -f "build/Release/cacert.pem" ] && cp "build/Release/cacert.pem" "dist/$bot/"
+            else
+              strip "build/$bot"
+              cp "build/$bot" "dist/$bot/"
+              [ -f build/cacert.pem ] && cp build/cacert.pem "dist/$bot/"
+            fi
+          done
+          tar -czf "dist/tg-bot-${{ matrix.artifact }}.tar.gz" -C dist echo_bot group_admin
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
