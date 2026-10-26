@@ -9,11 +9,13 @@ namespace tb {
 struct HttpResponse {
     int status;
     std::string body;
+    // keep-alive 响应的连接可回池复用；Connection: close 的用完即弃
+    bool reusable;
 };
 
-// 发起一个 HTTPS GET 请求并 co_await 其结果。
-// M1 阶段实现：每次请求新建连接，Connection: close（简单可靠）；
-// 连接复用/连接池留待 M4 优化。
+// 发起 HTTPS GET 请求并 co_await 其结果。
+// keep-alive 连接池：空闲连接复用省 TLS 握手，池满/断开的连接自动丢弃。
+// 前提：全部调用跑在同一个 io_context 单线程上（池操作无锁）。
 boost::asio::awaitable<HttpResponse> httpsGet(const std::string& host,
                                               const std::string& target);
 
