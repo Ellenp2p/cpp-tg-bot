@@ -58,20 +58,36 @@ boost::asio::awaitable<void> run(const std::string& token) {
 ## 快速开始
 
 > Windows + Git Bash 用户注意：Git Bash 不继承 `ProgramFiles(x86)` 等环境变量，
-> vcpkg 会因此崩溃（`visualstudio.cpp Value was null`）。仓库里提供了两个
-> 封装好 VS 环境的脚本，直接用它俩即可：
+> vcpkg 会因此崩溃（`visualstudio.cpp Value was null`）。仓库里提供了封装好
+> VS 环境的脚本，直接用它即可：
 >
 > ```bash
-> cmd //c build-deps.bat    # 装依赖（首次约 15 分钟，有缓存后秒级）
-> cmd //c build-app.bat     # 配置 + 编译，产出 build/Release/{echo_bot,group_admin}.exe
+> cmd //c setup.bat    # 新机器一键初始化（见下）
+> cmd //c build-app.bat # 日常开发：增量编译，产出 build/Release/{echo_bot,group_admin}.exe
 > ```
 
 1. 在 Telegram 找 [@BotFather](https://t.me/BotFather) 创建 Bot，拿到 token
-2. 本地构建（首次会编译 Boost/OpenSSL，约 20–60 分钟，之后有缓存很快）：
+2. 本地构建。**新机器推荐 `setup.bat`**：自动 clone vcpkg、从
+   [tgbot deps release](https://github.com/Ellenp2p/tgbot/releases/tag/deps)
+   下载预编译依赖（并检出对应 vcpkg commit 保证缓存命中），一分钟内就绪；
+   拉取失败会自动回退本地全量编译。日常开发直接 `build-app.bat`（增量编译）。
+
+手动构建（所有平台）：
 
 ```bash
-# 所有平台通用：clone vcpkg（提供最新版依赖）
+# 可选：先拉预编译依赖（和 CI 同款，省去编译 Boost/OpenSSL）
+base=https://github.com/Ellenp2p/tgbot/releases/download/deps
+curl -fsSL -o bincache.tar.gz "$base/vcpkg-bincache-<triplet>.tar.gz"
+curl -fsSL -o vcpkg-commit.txt "$base/vcpkg-commit.txt"
+tar xzf bincache.tar.gz   # 解出 vcpkg-bincache/
+export VCPKG_BINARY_SOURCES="files,$PWD/vcpkg-bincache,readwrite"
+
+# clone vcpkg；若拉了预编译包，须检出 vcpkg-commit.txt 里同一 commit
 git clone --depth 1 https://github.com/microsoft/vcpkg.git .vcpkg
+if [ -f vcpkg-commit.txt ]; then
+  sha=$(cat vcpkg-commit.txt)
+  git -C .vcpkg fetch --depth 1 origin "$sha" && git -C .vcpkg checkout --detach "$sha"
+fi
 
 # Linux / macOS
 ./.vcpkg/bootstrap-vcpkg.sh -disableMetrics
