@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(tg_bot VERSION 0.1.0 LANGUAGES CXX)
+project(tg_bot_framework VERSION 0.2.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -15,36 +15,30 @@ endif()
 # ---- 依赖（全部由 vcpkg 提供最新版本） ----
 find_package(Boost REQUIRED)
 if(TARGET Boost::headers)
-    set(TB_BOOST_TARGET Boost::headers)
+    set(TGBOT_BOOST_TARGET Boost::headers)
 else()
-    set(TB_BOOST_TARGET Boost::boost)
+    set(TGBOT_BOOST_TARGET Boost::boost)
 endif()
 find_package(OpenSSL REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
 find_package(Threads REQUIRED)
 
-add_executable(tg_bot
-    src/main.cpp
+# ---- 框架库 ----
+add_library(tgbot STATIC
     src/http_client.cpp
-    src/http_client.hpp
     src/bot_client.cpp
-    src/bot_client.hpp
     src/dispatcher.cpp
-    src/dispatcher.hpp
     src/long_poll.cpp
-    src/long_poll.hpp
     src/rate_limiter.cpp
-    src/rate_limiter.hpp
 )
 
-# 源码是 UTF-8，MSVC 需要显式指定，否则中文/宽字符字符串字面量会乱码
-if(MSVC)
-    target_compile_options(tg_bot PRIVATE /utf-8)
-endif()
+target_include_directories(tgbot PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>)
 
-target_link_libraries(tg_bot PRIVATE
-    ${TB_BOOST_TARGET}
+target_link_libraries(tgbot PUBLIC
+    ${TGBOT_BOOST_TARGET}
     OpenSSL::SSL
     OpenSSL::Crypto
     nlohmann_json::nlohmann_json
@@ -52,29 +46,53 @@ target_link_libraries(tg_bot PRIVATE
     Threads::Threads
 )
 
+# 源码是 UTF-8，MSVC 需要显式指定，否则中文/宽字符字符串字面量会乱码
+if(MSVC)
+    target_compile_options(tgbot PUBLIC /utf-8)
+endif()
+
 # ---- CA 证书包 ----
 # Unix 上 OpenSSL 的默认校验路径通常可用；Windows 上没有系统 CA 库，
 # 这里在配置阶段下载 Mozilla CA bundle 作为兜底，并放到 exe 旁边。
-set(TB_CACERT_PATH "${CMAKE_BINARY_DIR}/cacert.pem")
-if(NOT EXISTS "${TB_CACERT_PATH}")
-    file(DOWNLOAD "https://curl.se/ca/cacert.pem" "${TB_CACERT_PATH}"
+set(TGBOT_CACERT_PATH "${CMAKE_BINARY_DIR}/cacert.pem")
+if(NOT EXISTS "${TGBOT_CACERT_PATH}")
+    file(DOWNLOAD "https://curl.se/ca/cacert.pem" "${TGBOT_CACERT_PATH}"
         TIMEOUT 30
-        STATUS TB_DOWNLOAD_STATUS)
-    if(NOT TB_DOWNLOAD_STATUS MATCHES "^0;")
-        message(WARNING "Failed to download cacert.pem (${TB_DOWNLOAD_STATUS}); "
+        STATUS TGBOT_DOWNLOAD_STATUS)
+    if(NOT TGBOT_DOWNLOAD_STATUS MATCHES "^0;")
+        message(WARNING "Failed to download cacert.pem (${TGBOT_DOWNLOAD_STATUS}); "
             "TLS verification may fail on platforms without system CA store.")
     endif()
 endif()
-if(EXISTS "${TB_CACERT_PATH}")
-    file(TO_CMAKE_PATH "${TB_CACERT_PATH}" TB_CACERT_PATH_CMAKE)
-    target_compile_definitions(tg_bot PRIVATE TB_CACERT_PEM="${TB_CACERT_PATH_CMAKE}")
-    add_custom_command(TARGET tg_bot POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${TB_CACERT_PATH}" $<TARGET_FILE_DIR:tg_bot>)
+if(EXISTS "${TGBOT_CACERT_PATH}")
+    file(TO_CMAKE_PATH "${TGBOT_CACERT_PATH}" TGBOT_CACERT_PATH_CMAKE)
+    target_compile_definitions(tgbot PRIVATE TB_CACERT_PEM="${TGBOT_CACERT_PATH_CMAKE}")
 endif()
 
 # ---- Linux 全静态链接 ----
-option(TB_STATIC "Link a fully static binary on Linux (musl recommended)" ON)
-if(TB_STATIC AND UNIX AND NOT APPLE)
-    target_link_options(tg_bot PRIVATE -static -static-libgcc -static-libstdc++)
+option(TGBOT_STATIC "Link fully static binaries on Linux (musl recommended)" ON)
+if(TGBOT_STATIC AND UNIX AND NOT APPLE)
+    target_link_options(tgbot PUBLIC -static -static-libgcc -static-libstdc++)
+endif()
+
+# ---- 示例机器人 ----
+option(TGBOT_BUILD_EXAMPLES "Build example bots" ON)
+if(TGBOT_BUILD_EXAMPLES)
+    # echo 演示：回声 / /start / inline 键盘
+    add_executable(echo_bot examples/echo/main.cpp)
+    target_link_libraries(echo_bot PRIVATE tgbot)
+    if(EXISTS "${TGBOT_CACERT_PATH}")
+        add_custom_command(TARGET echo_bot POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${TGBOT_CACERT_PATH}" $<TARGET_FILE_DIR:echo_bot>)
+    endif()
+
+    # 群管理：贴纸发出 1 分钟后自动删除，/sticker on|off 由群管理员控制
+    add_executable(group_admin examples/group_admin/main.cpp)
+    target_link_libraries(group_admin PRIVATE tgbot)
+    if(EXISTS "${TGBOT_CACERT_PATH}")
+        add_custom_command(TARGET group_admin POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${TGBOT_CACERT_PATH}" $<TARGET_FILE_DIR:group_admin>)
+    endif()
 endif()

@@ -68,7 +68,7 @@ jobs:
             -DCMAKE_TOOLCHAIN_FILE="$PWD/.vcpkg/scripts/buildsystems/vcpkg.cmake" \
             -DVCPKG_OVERLAY_TRIPLETS="$PWD/triplets" \
             -DVCPKG_TARGET_TRIPLET=x64-linux-musl \
-            -DTB_STATIC=ON
+            -DTGBOT_STATIC=ON
           cmake --build build
 
       - name: Get vcpkg (macOS / Windows)
@@ -94,10 +94,10 @@ jobs:
         run: |
           mkdir -p dist/tg-bot
           if [ "${{ runner.os }}" = "Windows" ]; then
-            cp build/Release/tg_bot.exe dist/tg-bot/
+            cp build/Release/group_admin.exe dist/tg-bot/
           else
-            strip build/tg_bot
-            cp build/tg_bot dist/tg-bot/
+            strip build/group_admin
+            cp build/group_admin dist/tg-bot/
           fi
           # Windows 产物需要带上 CA bundle（已自动复制到 exe 旁）
           if [ -f build/Release/cacert.pem ]; then

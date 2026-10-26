@@ -1,7 +1,39 @@
-# cpp-tg-bot
+# tgbot — C++20 异步 Telegram Bot 框架
 
-C++20 + Boost.Asio 协程实现的异步 Telegram Bot。目标是产出可在任意 Linux 上
-直接运行的纯静态二进制。实施计划见 [PLAN.md](PLAN.md)。
+`tgbot` 是一个基于 C++20 协程（Boost.Asio）的 Telegram Bot **框架**：单线程
+事件循环、全协程 API、keep-alive 连接池、按聊天串行派发、429 智能退避、
+musl 全静态交付。业务机器人作为框架之上的薄壳编写，见 `examples/`。
+
+## 框架结构
+
+```
+include/tgbot/     公共头文件（框架 API，#include <tgbot/tg_bot.hpp> 全量引入）
+src/               框架实现（编译为静态库 tgbot）
+examples/
+  echo/            演示机器人：回声 / /start / inline 键盘
+  group_admin/     群管理机器人：贴纸 60 秒自动过期，/sticker on|off 群管理员控制
+```
+
+最小机器人长这样：
+
+```cpp
+#include <tgbot/tg_bot.hpp>
+
+boost::asio::awaitable<void> run(const std::string& token) {
+    tgbot::BotClient bot(token);
+    tgbot::Dispatcher dispatcher;
+    dispatcher.onAnyMessage([](tgbot::BotClient& bot, const nlohmann::json msg)
+            -> boost::asio::awaitable<void> {
+        const auto chatId = msg["chat"].value("id", std::int64_t{0});
+        co_await bot.sendMessage(chatId, "You said: " +
+                                         msg.value("text", std::string{}));
+    });
+    co_await tgbot::longPollLoop(bot, dispatcher);
+}
+```
+
+框架约定：**handler 是协程，json 按值传参**（跨 `co_await` 存活的对象必须
+按值持有，这是血泪教训，见下方踩坑记录）。
 
 ## 当前进度
 
@@ -9,8 +41,9 @@ C++20 + Boost.Asio 协程实现的异步 Telegram Bot。目标是产出可在任
 - [x] M2：Bot API 封装（`apiCall` 统一入口 / 429+5xx 退避重试 / `TelegramApiError`）
 - [x] M3：长轮询 + 每 update 协程派发（echobot，`/start` + 回声）
 - [x] M4：指数退避重连、429 retry_after 限速、inline 键盘/回调、Ctrl+C 优雅退出
-- [x] M5：musl 全静态交付（CI 三平台 release：linux-x86_64-static / macos-arm64 / windows-x86_64，ldd 全静态，strip 后 8.2 MB）
-- [x] M6：keep-alive 连接池、按聊天 strand 串行派发（同 chat 严格有序、跨 chat 并发）、offset 持久化（`tg_bot.offset`，原子写，重启不重放丢消息）
+- [x] M5：musl 全静态交付（CI 三平台 release，ldd 全静态，strip 后 8.2 MB）
+- [x] M6：keep-alive 连接池、按聊天 strand 串行派发（同 chat 严格有序、跨 chat 并发）、offset 持久化（`tg_bot.offset`，原子写，重启不丢消息）
+- [x] M7：框架化（`tgbot` 静态库 + `include/tgbot` 公共头 + examples 结构），新增 `deleteMessage` / `getChatMember` / `co_sleep`，附群管理机器人示例
 
 运行时会生成 `tg_bot.offset`（长轮询确认位点，重启续传用），别删。
 
@@ -30,7 +63,7 @@ C++20 + Boost.Asio 协程实现的异步 Telegram Bot。目标是产出可在任
 >
 > ```bash
 > cmd //c build-deps.bat    # 装依赖（首次约 15 分钟，有缓存后秒级）
-> cmd //c build-app.bat     # 配置 + 编译，产出 build/Release/tg_bot.exe
+> cmd //c build-app.bat     # 配置 + 编译，产出 build/Release/{echo_bot,group_admin}.exe
 > ```
 
 1. 在 Telegram 找 [@BotFather](https://t.me/BotFather) 创建 Bot，拿到 token
@@ -53,15 +86,17 @@ cmake -B build -DCMAKE_TOOLCHAIN_FILE="$PWD/.vcpkg/scripts/buildsystems/vcpkg.cm
 cmake --build build --config Release
 ```
 
-3. 运行：
+3. 运行（以群管理机器人为例）：
 
 ```bash
-./build/tg_bot <你的token>
+./build/group_admin <你的token>
 # 或
-export TG_BOT_TOKEN=<你的token> && ./build/tg_bot
+export TG_BOT_TOKEN=<你的token> && ./build/group_admin
 ```
 
-看到 `Connected as @<你的bot用户名>` 即 M1 验收通过。
+看到 `Connected as @<你的bot用户名>` 即启动成功。把它拉进群、设为管理员后，
+群里发 `/sticker on` 开启贴纸 60 秒自动过期，`/sticker off` 关闭
+（仅群管理员可开关，设置存 `group_admin_state.json`）。
 
 ## CI / Release
 

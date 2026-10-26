@@ -4,7 +4,7 @@
 
 #include <string>
 
-namespace tb {
+namespace tgbot {
 
 struct HttpResponse {
     int status;
@@ -19,4 +19,4 @@ struct HttpResponse {
 boost::asio::awaitable<HttpResponse> httpsGet(const std::string& host,
                                               const std::string& target);
 
-}  // namespace tb
+}  // namespace tgbot

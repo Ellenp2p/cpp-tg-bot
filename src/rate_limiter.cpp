@@ -1,4 +1,4 @@
-#include "rate_limiter.hpp"
+#include <tgbot/rate_limiter.hpp>
 
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/this_coro.hpp>
@@ -6,7 +6,7 @@
 
 #include <algorithm>
 
-namespace tb {
+namespace tgbot {
 
 namespace net = boost::asio;
 
@@ -24,4 +24,4 @@ net::awaitable<void> RateLimiter::beforeSend(std::int64_t chatId) {
     nextChatSend_[chatId] = slot + kChatInterval;
 }
 
-}  // namespace tb
+}  // namespace tgbot

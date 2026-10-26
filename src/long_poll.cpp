@@ -1,4 +1,4 @@
-#include "long_poll.hpp"
+#include <tgbot/long_poll.hpp>
 
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
@@ -18,7 +18,7 @@
 #include <map>
 #include <string>
 
-namespace tb {
+namespace tgbot {
 
 namespace net = boost::asio;
 
@@ -136,4 +136,4 @@ net::awaitable<void> longPollLoop(BotClient& bot, Dispatcher& dispatcher) {
     }
 }
 
-}  // namespace tb
+}  // namespace tgbot

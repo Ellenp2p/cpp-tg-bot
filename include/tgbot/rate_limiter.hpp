@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <map>
 
-namespace tb {
+namespace tgbot {
 
 // 发送限速器：全局约 30 msg/s（Telegram 限制），单聊天 1 msg/s。
 //
@@ -25,4 +25,4 @@ private:
     std::map<std::int64_t, std::chrono::steady_clock::time_point> nextChatSend_;
 };
 
-}  // namespace tb
+}  // namespace tgbot
