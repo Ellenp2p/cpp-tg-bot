@@ -22,6 +22,7 @@ endif()
 find_package(OpenSSL REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
+find_package(unofficial-sqlite3 CONFIG REQUIRED)
 find_package(Threads REQUIRED)
 
 # ---- 框架库 ----
@@ -31,6 +32,7 @@ add_library(tgbot STATIC
     src/dispatcher.cpp
     src/long_poll.cpp
     src/rate_limiter.cpp
+    src/sqlite_state_store.cpp
 )
 
 target_include_directories(tgbot PUBLIC
@@ -43,6 +45,7 @@ target_link_libraries(tgbot PUBLIC
     OpenSSL::Crypto
     nlohmann_json::nlohmann_json
     spdlog::spdlog
+    unofficial::sqlite3::sqlite3
     Threads::Threads
 )
 

@@ -54,10 +54,25 @@ jobs:
           path: vcpkg-bincache
           key: vcpkg-${{ matrix.triplet }}-${{ hashFiles('vcpkg.json') }}
 
+      # 从框架仓库 Ellenp2p/tgbot 的 deps release 拉预编译依赖，
+      # vcpkg install 变为纯恢复（秒级）。失败（首版未生成等）自动回退全量编译。
+      - name: Fetch prebuilt vcpkg deps
+        continue-on-error: true
+        run: |
+          base=https://github.com/Ellenp2p/tgbot/releases/download/deps
+          curl -fsSL -o bincache.tar.gz "$base/vcpkg-bincache-${{ matrix.triplet }}.tar.gz"
+          curl -fsSL -o vcpkg-commit.txt "$base/vcpkg-commit.txt"
+          tar xzf bincache.tar.gz
+
       - name: Build (musl, fully static)
         if: ${{ matrix.name == 'linux-static' }}
         run: |
           git clone --depth 1 https://github.com/microsoft/vcpkg.git .vcpkg
+          if [ -f vcpkg-commit.txt ]; then
+            sha=$(cat vcpkg-commit.txt)
+            git -C .vcpkg fetch --depth 1 origin "$sha"
+            git -C .vcpkg checkout --detach "$sha"
+          fi
           ./.vcpkg/bootstrap-vcpkg.sh -disableMetrics
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_TOOLCHAIN_FILE="$PWD/.vcpkg/scripts/buildsystems/vcpkg.cmake" \
@@ -72,6 +87,11 @@ jobs:
         if: ${{ matrix.name != 'linux-static' }}
         run: |
           git clone --depth 1 https://github.com/microsoft/vcpkg.git .vcpkg
+          if [ -f vcpkg-commit.txt ]; then
+            sha=$(cat vcpkg-commit.txt)
+            git -C .vcpkg fetch --depth 1 origin "$sha"
+            git -C .vcpkg checkout --detach "$sha"
+          fi
           if [ "${{ runner.os }}" = "Windows" ]; then
             ./.vcpkg/bootstrap-vcpkg.bat -disableMetrics
           else

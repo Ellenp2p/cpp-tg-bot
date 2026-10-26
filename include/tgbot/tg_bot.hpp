@@ -13,4 +13,6 @@
 #include <tgbot/bot_client.hpp>
 #include <tgbot/dispatcher.hpp>
 #include <tgbot/long_poll.hpp>
+#include <tgbot/sqlite_state_store.hpp>
+#include <tgbot/state_store.hpp>
 #include <tgbot/util.hpp>

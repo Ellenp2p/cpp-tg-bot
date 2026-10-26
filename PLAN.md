@@ -131,3 +131,26 @@ M1 → M2 → M3（此时已是一个可跑的 Bot）
 ```
 
 每个里程碑结束时编译 + 用真实 token 验证，再进下一个。
+
+
+## 6. M8 / M9 追加记录（2026-10-26）
+
+**M8：SQLite 状态存储**
+- 新增 `tgbot::StateStore` 抽象（`get` / `set` / `erase`，见
+  `include/tgbot/state_store.hpp`）+ SQLite 实现 `SqliteStateStore`（WAL，
+  prepared statements）
+- group_admin 的群开关改存 `group_admin_state.db`；vcpkg 新增 `sqlite3` 依赖
+- 注意：vcpkg 的 sqlite3 CMake target 名是 `unofficial::sqlite3::sqlite3`
+  （双冒号命名空间），不是 `unofficial-sqlite3::sqlite3`
+
+**M9：框架独立仓库 + 预编译依赖**
+- 框架源码 → [Ellenp2p/tgbot](https://github.com/Ellenp2p/tgbot)（public，
+  只含 include/ src/ CMakeLists vcpkg.json triplets/）
+- `deps.yml`：push / 每日 03:23 UTC / 手动触发，编译 vcpkg 依赖并把
+  binary cache 发到 tag `deps` 的 rolling release
+  （`vcpkg-bincache-<triplet>.tar.gz` + `vcpkg-commit.txt`）
+- 本仓库 CI/release 构建前先 curl 拉 bincache 并按 `vcpkg-commit.txt`
+  浅克隆检出同一 commit（ABI 哈希一致才命中），失败自动回退全量编译
+- release 产物：单个 tarball 内含 `echo_bot/` 与 `group_admin/` 两个目录
+- 本地 `framework/` 目录是 tgbot 仓库的工作副本（已 gitignore，
+  不进入本仓库）
