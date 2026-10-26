@@ -1,13 +1,13 @@
 #pragma once
 
-#include "bot_client.hpp"
+#include <tgbot/bot_client.hpp>
 
 #include <functional>
 #include <map>
 #include <string>
 #include <vector>
 
-namespace tb {
+namespace tgbot {
 
 // 事件分发器：注册 handler，每个 update 由独立的协程处理
 class Dispatcher {
@@ -32,4 +32,4 @@ private:
     std::map<std::string, MessageHandler> callbackQueries_;
 };
 
-}  // namespace tb
+}  // namespace tgbot

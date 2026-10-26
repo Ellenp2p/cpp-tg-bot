@@ -1,11 +1,11 @@
-#include "dispatcher.hpp"
+#include <tgbot/dispatcher.hpp>
 
 #include <spdlog/spdlog.h>
 
 #include <exception>
 #include <utility>
 
-namespace tb {
+namespace tgbot {
 
 using nlohmann::json;
 
@@ -85,4 +85,4 @@ boost::asio::awaitable<void> Dispatcher::dispatch(json update, BotClient& bot) {
     }
 }
 
-}  // namespace tb
+}  // namespace tgbot

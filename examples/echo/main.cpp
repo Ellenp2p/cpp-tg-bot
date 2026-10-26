@@ -1,6 +1,6 @@
-#include "bot_client.hpp"
-#include "dispatcher.hpp"
-#include "long_poll.hpp"
+#include <tgbot/bot_client.hpp>
+#include <tgbot/dispatcher.hpp>
+#include <tgbot/long_poll.hpp>
 
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
@@ -19,7 +19,7 @@ namespace net = boost::asio;
 using nlohmann::json;
 
 net::awaitable<void> run(const std::string& token) {
-    tb::BotClient bot(token);
+    tgbot::BotClient bot(token);
 
     try {
         const auto me = co_await bot.getMe();
@@ -31,9 +31,9 @@ net::awaitable<void> run(const std::string& token) {
         co_return;
     }
 
-    tb::Dispatcher dispatcher;
+    tgbot::Dispatcher dispatcher;
 
-    dispatcher.onCommand("start", [](tb::BotClient& bot,
+    dispatcher.onCommand("start", [](tgbot::BotClient& bot,
                                      const json msg) -> net::awaitable<void> {
         const auto chatId = msg["chat"].value("id", std::int64_t{0});
         co_await bot.sendMessage(chatId,
@@ -42,7 +42,7 @@ net::awaitable<void> run(const std::string& token) {
     });
 
     // echobot：原样回复任何非命令消息
-    dispatcher.onAnyMessage([](tb::BotClient& bot,
+    dispatcher.onAnyMessage([](tgbot::BotClient& bot,
                                const json msg) -> net::awaitable<void> {
         const auto chatId = msg["chat"].value("id", std::int64_t{0});
         const std::string text = msg.value("text", "");
@@ -52,7 +52,7 @@ net::awaitable<void> run(const std::string& token) {
     });
 
     // inline 键盘演示：/inline 出按钮，点击回 pong 气泡
-    dispatcher.onCommand("inline", [](tb::BotClient& bot,
+    dispatcher.onCommand("inline", [](tgbot::BotClient& bot,
                                       const json msg) -> net::awaitable<void> {
         const auto chatId = msg["chat"].value("id", std::int64_t{0});
         const json markup = {
@@ -62,7 +62,7 @@ net::awaitable<void> run(const std::string& token) {
         co_await bot.sendMessage(chatId, "按下面的按钮：", markup);
     });
         dispatcher.onCallbackQuery(
-        "btn:", [](tb::BotClient& bot,
+        "btn:", [](tgbot::BotClient& bot,
                    const json cq) -> net::awaitable<void> {
             co_await bot.answerCallbackQuery(cq["id"].get<std::string>(),
                                              "pong!");
@@ -78,7 +78,7 @@ net::awaitable<void> run(const std::string& token) {
         });
 
     spdlog::info("Long polling started, Ctrl+C to stop");
-    co_await tb::longPollLoop(bot, dispatcher);
+    co_await tgbot::longPollLoop(bot, dispatcher);
 }
 
 int main(int argc, char** argv) {

@@ -63,10 +63,10 @@ jobs:
             -DCMAKE_TOOLCHAIN_FILE="$PWD/.vcpkg/scripts/buildsystems/vcpkg.cmake" \
             -DVCPKG_OVERLAY_TRIPLETS="$PWD/triplets" \
             -DVCPKG_TARGET_TRIPLET=x64-linux-musl \
-            -DTB_STATIC=ON
+            -DTGBOT_STATIC=ON
           cmake --build build
           echo "=== linkage check ==="
-          ldd build/tg_bot || echo "fully static"
+          ldd build/echo_bot build/group_admin || echo "fully static"
 
       - name: Get vcpkg (macOS / Windows)
         if: ${{ matrix.name != 'linux-static' }}
@@ -92,8 +92,10 @@ jobs:
         with:
           name: tg-bot-${{ matrix.name }}
           path: |
-            build/tg_bot
-            build/Release/tg_bot.exe
+            build/echo_bot
+            build/group_admin
+            build/Release/echo_bot.exe
+            build/Release/group_admin.exe
             build/cacert.pem
             build/Release/cacert.pem
           if-no-files-found: ignore

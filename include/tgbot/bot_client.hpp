@@ -1,7 +1,7 @@
 #pragma once
 
-#include "http_client.hpp"
-#include "rate_limiter.hpp"
+#include <tgbot/http_client.hpp>
+#include <tgbot/rate_limiter.hpp>
 
 #include <nlohmann/json.hpp>
 
@@ -10,7 +10,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace tb {
+namespace tgbot {
 
 // Telegram 返回 {"ok": false, ...} 或 HTTP 层错误时抛出
 struct TelegramApiError : std::runtime_error {
@@ -46,10 +46,17 @@ public:
     // 回按钮的"气泡提示"（alert=false 时为轻提示）
     boost::asio::awaitable<void> answerCallbackQuery(
         const std::string& callbackQueryId, const std::string& text = "");
+    // 删除消息；失败（已删除/太老/无权限）抛 TelegramApiError
+    boost::asio::awaitable<nlohmann::json> deleteMessage(
+        std::int64_t chatId, std::int64_t messageId);
+    // 查询群成员，返回 ChatMember 对象（"status" 为 creator/administrator/
+    // member/restricted/left/kicked）
+    boost::asio::awaitable<nlohmann::json> getChatMember(std::int64_t chatId,
+                                                         std::int64_t userId);
 
 private:
     std::string token_;
     RateLimiter limiter_;  // 发送限速（单 io_context 线程内无锁）
 };
 
-}  // namespace tb
+}  // namespace tgbot

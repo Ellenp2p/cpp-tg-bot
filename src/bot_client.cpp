@@ -1,4 +1,4 @@
-#include "bot_client.hpp"
+#include <tgbot/bot_client.hpp>
 
 #include <boost/asio/this_coro.hpp>
 #include <boost/asio/steady_timer.hpp>
@@ -11,7 +11,7 @@
 #include <cctype>
 #include <utility>
 
-namespace tb {
+namespace tgbot {
 
 namespace net = boost::asio;
 using nlohmann::json;
@@ -158,4 +158,21 @@ net::awaitable<void> BotClient::answerCallbackQuery(
     co_await apiCall("answerCallbackQuery", std::move(params));
 }
 
-}  // namespace tb
+
+net::awaitable<json> BotClient::deleteMessage(std::int64_t chatId,
+                                              std::int64_t messageId) {
+    co_await limiter_.beforeSend(chatId);
+    co_return co_await apiCall("deleteMessage",
+                               {{"chat_id", std::to_string(chatId)},
+                                {"message_id", std::to_string(messageId)}});
+}
+
+net::awaitable<json> BotClient::getChatMember(std::int64_t chatId,
+                                              std::int64_t userId) {
+    // 管理类查询不走发送限速
+    co_return co_await apiCall("getChatMember",
+                               {{"chat_id", std::to_string(chatId)},
+                                {"user_id", std::to_string(userId)}});
+}
+
+}  // namespace tgbot

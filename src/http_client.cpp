@@ -1,4 +1,4 @@
-#include "http_client.hpp"
+#include <tgbot/http_client.hpp>
 
 #include <boost/asio/connect.hpp>
 #include <boost/asio/ip/tcp.hpp>
@@ -18,7 +18,7 @@
 #include <stdexcept>
 #include <vector>
 
-namespace tb {
+namespace tgbot {
 
 namespace net = boost::asio;
 namespace beast = boost::beast;
@@ -145,4 +145,4 @@ net::awaitable<HttpResponse> httpsGet(const std::string& host,
     throw std::runtime_error("httpsGet: request failed on fresh connection");
 }
 
-}  // namespace tb
+}  // namespace tgbot
