@@ -2,6 +2,7 @@
 //
 // 功能：开启后，群里任何人发的贴纸会在 60 秒后被自动删除。
 // 控制：群管理员在群里发 /sticker on 开启，/sticker off 关闭；
+//       发 /sticker（无参数）查看当前状态；
 //       设置持久化到 group_admin_state.db（SQLite），重启不丢。
 //
 // 用法：./group_admin <bot-token>   或   TG_BOT_TOKEN=... ./group_admin
@@ -132,8 +133,14 @@ net::awaitable<void> run(const std::string& token) {
         const std::string arg = sp == std::string::npos ? "" : text.substr(sp + 1);
         const bool enable = arg == "on";
         if (!enable && arg != "off") {
-            co_await reply(
-                "用法：/sticker on 开启贴纸 1 分钟过期，/sticker off 关闭");
+            // 无参数或参数不认识：显示当前状态 + 用法
+            const auto current = state.stickerExpireEnabled(chatId);
+            co_await reply(std::string{current ? "当前状态：已开启"
+                                                "（贴纸发送 1 分钟后自动删除）"
+                                              : "当前状态：已关闭"
+                                                "（贴纸不会自动删除）"} +
+                           "\n\n用法：/sticker on 开启，/sticker off 关闭"
+                           "（仅群管理员）");
             co_return;
         }
 
