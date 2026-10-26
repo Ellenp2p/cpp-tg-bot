@@ -6,8 +6,9 @@ on:
       - '*'
 
 env:
-  VCPKG_BINARY_SOURCES: files,${{ github.workspace }}/vcpkg-bincache,readwrite
   # Alpine(musl) 上 vcpkg 官方 cmake 4.4.3 是 glibc 预编译版跑不了，强制用系统工具链
+  # 注意：VCPKG_BINARY_SOURCES 统一在 step 里用 $GITHUB_WORKSPACE 设置
+  #（container job 不翻译 env 里的主机路径）
   VCPKG_FORCE_SYSTEM_BINARIES: "1"
 
 permissions:
@@ -48,6 +49,9 @@ jobs:
                              perl linux-headers bash ca-certificates pkgconf
 
       - uses: actions/checkout@v4
+
+      - name: Set bincache path
+        run: echo "VCPKG_BINARY_SOURCES=files,$GITHUB_WORKSPACE/vcpkg-bincache,readwrite" >> "$GITHUB_ENV"
 
       # 从 tag 解析要发布的机器人：
       #   group_admin-v0.0.1 / echo_bot-v0.0.1  → 只发该机器人
