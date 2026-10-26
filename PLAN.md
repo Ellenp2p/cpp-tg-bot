@@ -154,3 +154,12 @@ M1 → M2 → M3（此时已是一个可跑的 Bot）
 - release 产物：单个 tarball 内含 `echo_bot/` 与 `group_admin/` 两个目录
 - 本地 `framework/` 目录是 tgbot 仓库的工作副本（已 gitignore，
   不进入本仓库）
+
+**踩坑补充**：
+- container job **不会翻译 workflow env 里的路径**：`VCPKG_BINARY_SOURCES`
+  写在 env 里时，Alpine 容器内指向主机路径（`/home/runner/work/...`），
+  vcpkg 把缓存写进容器里不可见的目录 → 必须在 step 里用
+  `$GITHUB_WORKSPACE` 设置（两仓库的 workflow 已统一这么写）
+- 首次 push 的 include 目录层级错误（头文件少了 `tgbot/` 子目录）导致
+  三平台编译失败；修复后 deps CI 全绿，三平台 bincache 资产齐备
+- 实测：命中 bincache 时构建 ~1.5 分钟（原全量 ~6-10 分钟）
