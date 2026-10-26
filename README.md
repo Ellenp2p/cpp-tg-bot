@@ -103,9 +103,12 @@ export TG_BOT_TOKEN=<你的token> && ./build/group_admin
 - 每次 push / PR 跑 [CI](.github/workflows/ci.yml)，三平台矩阵：
   - `linux-static`：Alpine 容器内 musl 工具链，**全静态二进制**
   - `macos-arm64`、`windows-x64`（静态 CRT + vcpkg 静态 triplet）
-- 打 tag（如 `v0.1.0`）触发 [Release](.github/workflows/release.yml)，
-  自动打包三平台产物并发布到 GitHub Releases；每个 tarball 内含
-  `echo_bot/` 与 `group_admin/` 两个独立示例目录
+- 打 tag 触发 [Release](.github/workflows/release.yml)，自动打包三平台产物并发布。
+  tag 规则：
+  - `group_admin-v0.0.1` / `echo_bot-v0.0.1` —— 只发布对应机器人，各自一个 release
+  - `v0.2.0` —— 全部机器人
+  - 产物命名：`<bot>-<platform>.tar.gz`（Linux/macOS，保留可执行权限 + cacert.pem）
+    或 `<bot>-<platform>.exe`（Windows，下载即跑）
 - **依赖预编译**：框架源码独立维护在 [Ellenp2p/tgbot](https://github.com/Ellenp2p/tgbot)，
   其 deps CI 每日检查 vcpkg 上游并把预编译 binary cache 发布到
   [`deps` release](https://github.com/Ellenp2p/tgbot/releases/tag/deps)。
