@@ -175,4 +175,13 @@ net::awaitable<json> BotClient::getChatMember(std::int64_t chatId,
                                 {"user_id", std::to_string(userId)}});
 }
 
+net::awaitable<json> BotClient::setMyCommands(
+    std::vector<std::pair<std::string, std::string>> commands) {
+    json arr = json::array();
+    for (const auto& [cmd, desc] : commands) {
+        arr.push_back({{"command", cmd}, {"description", desc}});
+    }
+    co_return co_await apiCall("setMyCommands", {{"commands", arr.dump()}});
+}
+
 }  // namespace tgbot
