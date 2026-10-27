@@ -9,6 +9,8 @@
 #include <map>
 #include <stdexcept>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace tgbot {
 
@@ -53,6 +55,9 @@ public:
     // member/restricted/left/kicked）
     boost::asio::awaitable<nlohmann::json> getChatMember(std::int64_t chatId,
                                                          std::int64_t userId);
+    // 设置客户端命令菜单（输入框旁 "/" 自动补全列表），启动时调用一次即可
+    boost::asio::awaitable<nlohmann::json> setMyCommands(
+        std::vector<std::pair<std::string, std::string>> commands);
 
 private:
     std::string token_;

@@ -106,6 +106,14 @@ net::awaitable<void> run(const std::string& token) {
         co_return;
     }
 
+    // 设置客户端命令菜单，失败不阻断启动
+    try {
+        co_await bot.setMyCommands(
+            {{"sticker", "开关或查询贴纸自动删除（on/off/无参数）"}});
+    } catch (const std::exception& e) {
+        spdlog::warn("setMyCommands failed: {}", e.what());
+    }
+
     tgbot::SqliteStateStore store(kStateDb);
     GroupState state(store);
 
