@@ -6,6 +6,8 @@
 //       /sticker 或 /sticker status（任何人）查看状态面板：
 //       功能开关、删除时限、机器人在群里的权限。
 //       设置持久化到 group_admin_state.db（SQLite），重启不丢。
+// 清理：群里的命令消息和机器人的回复会在 20 秒后自动删除，避免刷屏。
+// 私聊：/start、/help 查看功能介绍。
 //
 // 用法：./group_admin <bot-token>   或   TG_BOT_TOKEN=... ./group_admin
 // 注意：机器人需要被设为群管理员（至少有"删除消息"权限），否则删不掉。
@@ -35,6 +37,7 @@ namespace {
 constexpr auto kDefaultStickerDelay = std::chrono::seconds{60};
 constexpr long kMinDelaySec = 5;
 constexpr long kMaxDelaySec = 3600;
+constexpr auto kGroupMsgTtl = std::chrono::seconds{20};  // 群内命令消息/回复的存活时间
 constexpr const char* kStateDb = "group_admin_state.db";
 
 // 每个群的贴纸设置（开关 + 删除时限），基于 StateStore 键值存储
@@ -95,26 +98,45 @@ net::awaitable<bool> isGroupAdmin(BotClient& bot, std::int64_t chatId,
     }
 }
 
-// 延时删除贴纸。独立协程执行（不占 chat strand），到点删除，
+// 延时删除一条消息。独立协程执行（不占 chat strand），到点删除，
 // 失败（已被删/太老/无权限）只记日志不打扰聊天。
-void scheduleStickerDelete(BotClient& bot, std::int64_t chatId,
-                           std::int64_t messageId,
-                           std::chrono::seconds delay,
-                           const net::any_io_executor& executor) {
+void scheduleDelete(BotClient& bot, std::int64_t chatId,
+                    std::int64_t messageId, std::chrono::seconds delay,
+                    const net::any_io_executor& executor,
+                    const char* what) {
     net::co_spawn(
         executor,
-        [&bot, chatId, messageId, delay]() -> net::awaitable<void> {
+        [&bot, chatId, messageId, delay, what]() -> net::awaitable<void> {
             co_await tgbot::co_sleep(delay);
             try {
                 co_await bot.deleteMessage(chatId, messageId);
-                spdlog::info("sticker expired: chat={} message_id={}", chatId,
+                spdlog::info("{} expired: chat={} message_id={}", what, chatId,
                              messageId);
             } catch (const std::exception& e) {
-                spdlog::warn("delete sticker failed: chat={} message_id={}: {}",
+                spdlog::warn("delete {} failed: chat={} message_id={}: {}", what,
                              chatId, messageId, e.what());
             }
         },
         net::detached);
+}
+
+// 回复命令，并在群里把"用户命令消息 + bot 回复"都在 kGroupMsgTtl 后清理掉，
+// 避免群被命令刷屏。私聊不清理。
+net::awaitable<void> replyAndSweep(BotClient& bot, const json& msg,
+                                   const std::string& text) {
+    const auto chatId = msg["chat"].value("id", std::int64_t{0});
+    const auto chatType = msg["chat"].value("type", std::string{});
+    const auto sent = co_await bot.sendMessage(chatId, text);
+    if (chatType != "group" && chatType != "supergroup") {
+        co_return;
+    }
+    const auto executor = co_await net::this_coro::executor;
+    const auto cmdMsgId = msg.value("message_id", std::int64_t{0});
+    const auto replyMsgId = sent.value("message_id", std::int64_t{0});
+    scheduleDelete(bot, chatId, cmdMsgId, kGroupMsgTtl, executor, "command");
+    if (replyMsgId != 0) {
+        scheduleDelete(bot, chatId, replyMsgId, kGroupMsgTtl, executor, "reply");
+    }
 }
 
 }  // namespace
@@ -137,7 +159,9 @@ net::awaitable<void> run(const std::string& token) {
     // 设置客户端命令菜单，失败不阻断启动
     try {
         co_await bot.setMyCommands(
-            {{"sticker", "贴纸自动删除：on/off/delay/无参数查状态"}});
+            {{"start", "开始使用 / 功能介绍"},
+             {"help", "这个机器人能做什么"},
+             {"sticker", "贴纸自动删除：on/off/delay/无参数查状态"}});
     } catch (const std::exception& e) {
         spdlog::warn("setMyCommands failed: {}", e.what());
     }
@@ -147,6 +171,30 @@ net::awaitable<void> run(const std::string& token) {
 
     tgbot::Dispatcher dispatcher;
 
+    // /start /help —— 私聊欢迎语 + 功能说明（群里同样可用，但会被 20 秒清理）
+    const auto helpText =
+        std::string{
+            "你好，我是群管理机器人 🤖\n"
+            "把我拉进群、设为管理员（勾选“删除消息”）后，我可以：\n"
+            "• 自动删除群里过期的贴纸（默认 60 秒）\n"
+            "• /sticker —— 查看本群状态（开关/时限/我的权限）\n"
+            "• /sticker on / off —— 开关贴纸自动删除（群管理员）\n"
+            "• /sticker delay <秒> —— 设置删除时限，5–3600 秒（群管理员）\n"
+            "\n"
+            "小规则：群里的命令消息和我的回复会在 20 秒后自动清理。\n"
+            "注意：需要 @BotFather 里对我的 /setprivacy 设为 Disable，"
+            "我才能看到群消息。"};
+    dispatcher.onCommand("start",
+                         [helpText](BotClient& bot,
+                                    const json msg) -> net::awaitable<void> {
+                             co_await replyAndSweep(bot, msg, helpText);
+                         });
+    dispatcher.onCommand("help",
+                         [helpText](BotClient& bot,
+                                    const json msg) -> net::awaitable<void> {
+                             co_await replyAndSweep(bot, msg, helpText);
+                         });
+
     // /sticker —— 无参数：状态面板（任何人可用）；on/off/delay：仅群管理员
     dispatcher.onCommand("sticker",
                          [&state, botId](BotClient& bot,
@@ -155,8 +203,8 @@ net::awaitable<void> run(const std::string& token) {
         const auto chatType =
             msg["chat"].value("type", std::string{});
         const auto reply = [&bot,
-                            chatId](const std::string& text) -> net::awaitable<void> {
-            co_await bot.sendMessage(chatId, text);
+                            msg](const std::string& text) -> net::awaitable<void> {
+            co_await replyAndSweep(bot, msg, text);
         };
 
         if (chatType != "group" && chatType != "supergroup") {
@@ -267,7 +315,7 @@ net::awaitable<void> run(const std::string& token) {
                 "sticker received: chat={} message_id={}, will delete in {}s",
                 chatId, messageId, delay.count());
             const auto executor = co_await net::this_coro::executor;
-            scheduleStickerDelete(bot, chatId, messageId, delay, executor);
+            scheduleDelete(bot, chatId, messageId, delay, executor, "sticker");
         });
 
     spdlog::info("Long polling started, Ctrl+C to stop");
