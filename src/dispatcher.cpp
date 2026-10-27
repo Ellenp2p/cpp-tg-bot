@@ -53,7 +53,7 @@ boost::asio::awaitable<void> Dispatcher::dispatch(json update, BotClient& bot) {
     if (msgIt == update.end()) {
         co_return;  // 其他 update 类型（edited_message 等）后续按需添加
     }
-    const json msg = *msgIt;  // 按值持有
+    json msg = *msgIt;  // 按值持有（命令带 @后缀 时需归一化文本）
     const std::string text = msg.value("text", "");
 
     // 命令消息："/start" 或 "/start@YourBot" 形式
@@ -62,11 +62,21 @@ boost::asio::awaitable<void> Dispatcher::dispatch(json update, BotClient& bot) {
         std::string command =
             text.substr(1, space == std::string::npos ? std::string::npos
                                                       : space - 1);
+        std::size_t suffixAt = std::string::npos;
+        std::string suffix;
         if (const auto at = command.find('@');
             at != std::string::npos) {
+            suffix = command.substr(at);  // 含 '@'
             command.erase(at);
+            suffixAt = at;
         }
         if (const auto it = commands_.find(command); it != commands_.end()) {
+            if (suffixAt != std::string::npos) {
+                // 归一化文本：去掉命令里的 @BotName，
+                // handler 侧解析参数时无需关心这种形式
+                msg["text"].get_ref<std::string&>().erase(1 + suffixAt,
+                                                          suffix.size());
+            }
             try {
                 co_await it->second(bot, msg);
             } catch (const std::exception& e) {
