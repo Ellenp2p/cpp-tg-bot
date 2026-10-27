@@ -194,15 +194,12 @@ net::awaitable<void> run(const std::string& token) {
             }
 
             co_await reply(
-                std::string{enabled ? "当前状态：已开启\n删除时限：贴纸发送 " +
+                std::string{enabled ? "已开启，贴纸 " +
                                           std::to_string(delay.count()) +
-                                          " 秒后自动删除"
-                                    : "当前状态：已关闭\n删除时限：-"} +
+                                          " 秒后删除"
+                                    : "已关闭，贴纸不会自动删除"} +
                 "\n我的权限：" + botRole +
-                "\n\n用法（仅群管理员）：\n"
-                "/sticker on — 开启\n"
-                "/sticker off — 关闭\n"
-                "/sticker delay <秒> — 设置删除时限（5–3600）");
+                "\n管理员：/sticker on|off|delay <秒>");
             co_return;
         }
 
