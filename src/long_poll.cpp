@@ -83,6 +83,23 @@ net::awaitable<void> longPollLoop(BotClient& bot, Dispatcher& dispatcher) {
     if (offset > 0) {
         spdlog::info("resuming from persisted offset {}", offset);
     }
+
+    // 启动时丢弃停机期间积压的所有 updates（"停机即完全停止"语义）：
+    // 负 offset 拉取会忘记之前所有 updates，再确认掉最后一条即可清空队列。
+    // 重启后不补放旧消息；要求不丢消息的部署应改用 webhook。
+    try {
+        const auto last = co_await bot.getUpdates(-1, /*timeout=*/0);
+        if (!last.empty()) {
+            offset = last.back().value("update_id", std::int64_t{0}) + 1;
+            co_await bot.getUpdates(offset, /*timeout=*/0);  // 确认最后一条
+            saveOffset(offset);
+            spdlog::info("dropped pending updates, start from offset {}",
+                         offset);
+        }
+    } catch (const std::exception& e) {
+        spdlog::warn("flush pending updates failed: {}; use persisted offset",
+                     e.what());
+    }
     // 指数退避：1s -> 2s -> 4s ... 封顶 30s，成功一次即重置
     auto backoff = std::chrono::seconds{1};
 

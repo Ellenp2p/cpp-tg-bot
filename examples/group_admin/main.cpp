@@ -163,8 +163,10 @@ std::string dailyCode(std::int64_t userId) {
 // ephemeral 消息上的操作键盘：刷新 = 编辑文本，销毁 = 删除 ephemeral
 json ephActionKb() {
     return {{"inline_keyboard",
-             {{{"text", "🔄 刷新"}, {"callback_data", "eph:refresh"}},
-              {{"text", "🗑 销毁"}, {"callback_data", "eph:destroy"}}}}};
+             json::array({{{{{"text", "🔄 刷新"},
+                             {"callback_data", "eph:refresh"}},
+                            {{"text", "🗑 销毁"},
+                             {"callback_data", "eph:destroy"}}}}})}};
 }
 
 }  // namespace
@@ -353,8 +355,9 @@ net::awaitable<void> run(const std::string& token) {
                              co_await bot.sendMessage(
                                  chatId, "🎁 每日福利 · 点击领取",
                                  {{"inline_keyboard",
-                                   {{{"text", "🎟 领取我的专属码"},
-                                     {"callback_data", "eph:claim"}}}}});
+                                   json::array({{{{"text", "🎟 领取我的专属码"},
+                                                  {"callback_data",
+                                                   "eph:claim"}}}})}});
                              // 与全群命令一致：命令消息立即清理
                              try {
                                  co_await bot.deleteMessage(
