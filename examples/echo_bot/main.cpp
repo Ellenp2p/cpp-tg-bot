@@ -33,8 +33,10 @@ net::awaitable<void> run(const std::string& token) {
 
     // 设置客户端命令菜单，失败不阻断启动
     try {
-        co_await bot.setMyCommands({{"start", "开始使用"},
-                                    {"inline", "inline 键盘演示"}});
+        co_await bot.setMyCommands(std::vector<tgbot::BotCommand>{
+            {"start", "开始使用", false},
+            {"inline", "inline 键盘演示", false},
+        });
     } catch (const std::exception& e) {
         spdlog::warn("setMyCommands failed: {}", e.what());
     }
