@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include <map>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -18,6 +19,30 @@ namespace tgbot {
 struct TelegramApiError : std::runtime_error {
     long errorCode;
     TelegramApiError(long code, const std::string& description);
+};
+
+// Ephemeral Message 参数（Bot API 10.2+）：发送"群里只有指定用户可见"的消息。
+// 两种合法用法：
+// - 被动回复（所有 bot）：触发动作后 15 秒窗口内提供 callbackQueryId
+//   （用户点了 bot 的按钮），消息只投递到触发的那台设备
+// - 主动推送（bot 必须是群管理员）：只填 receiverUserId，任意时刻可发给
+//   群里任意非 bot 成员，可能投递到其多个在线客户端
+// 注意：官方明确不保证送达（离线/切设备/重启可能丢），不能当通知渠道。
+// replaceCallbackQueryMessage=true 表示用这条 ephemeral 消息原地替换
+// 触发它的那条公开消息（仅对触发者生效；对 ephemeral 消息上的按钮回调
+// 必须为 false，那种回调要用 editEphemeralMessage* 系列）
+struct EphemeralMessageParameters {
+    std::int64_t receiverUserId = 0;
+    std::optional<std::string> callbackQueryId;
+    std::optional<bool> replaceCallbackQueryMessage;
+};
+
+// 命令菜单项。isEphemeral=true 表示 ephemeral command（Bot API 10.2+）：
+// 用户把这个命令发到群里时，其他成员（和其他 bot）完全看不到这条命令消息
+struct BotCommand {
+    std::string command;
+    std::string description;
+    bool isEphemeral = false;
 };
 
 // Bot API 客户端：所有方法可 co_await，统一走 apiCall 入口
@@ -55,9 +80,29 @@ public:
     // member/restricted/left/kicked）
     boost::asio::awaitable<nlohmann::json> getChatMember(std::int64_t chatId,
                                                          std::int64_t userId);
-    // 设置客户端命令菜单（输入框旁 "/" 自动补全列表），启动时调用一次即可
+    // 发送 ephemeral 消息（群内仅 receiver 可见）。返回 sent Message：
+    // 其 message_id 恒为 0，后续编辑/删除用 ephemeral_message_id 标识
+    boost::asio::awaitable<nlohmann::json> sendEphemeralMessage(
+        std::int64_t chatId, const EphemeralMessageParameters& ephemeral,
+        const std::string& text, const nlohmann::json& replyMarkup = nullptr);
+    // 编辑 ephemeral 消息的文本（和按钮）。成功返回 true
+    boost::asio::awaitable<nlohmann::json> editEphemeralMessageText(
+        std::int64_t chatId, std::int64_t receiverUserId,
+        std::int64_t ephemeralMessageId, const std::string& text,
+        const nlohmann::json& replyMarkup = nullptr);
+    // 只改 ephemeral 消息的按钮。成功返回 true
+    boost::asio::awaitable<nlohmann::json> editEphemeralMessageReplyMarkup(
+        std::int64_t chatId, std::int64_t receiverUserId,
+        std::int64_t ephemeralMessageId, const nlohmann::json& replyMarkup);
+    // 删除 ephemeral 消息。成功返回 true
+    boost::asio::awaitable<nlohmann::json> deleteEphemeralMessage(
+        std::int64_t chatId, std::int64_t receiverUserId,
+        std::int64_t ephemeralMessageId);
+    // 设置客户端命令菜单（输入框旁 "/" 自动补全列表），启动时调用一次即可。
+    // isEphemeral=true 的命令是 ephemeral command（Bot API 10.2+）：用户把它
+    // 发到群里时，其他成员（和其他 bot）完全看不到这条命令消息
     boost::asio::awaitable<nlohmann::json> setMyCommands(
-        std::vector<std::pair<std::string, std::string>> commands);
+        const std::vector<BotCommand>& commands);
 
 private:
     std::string token_;

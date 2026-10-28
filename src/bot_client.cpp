@@ -39,6 +39,18 @@ std::string urlEncode(std::string_view in) {
     return out;
 }
 
+// EphemeralMessageParameters -> API 的 ephemeral_message_parameters 对象
+json ephemeralToJson(const EphemeralMessageParameters& p) {
+    json j = {{"receiver_user_id", p.receiverUserId}};
+    if (p.callbackQueryId) {
+        j["callback_query_id"] = *p.callbackQueryId;
+    }
+    if (p.replaceCallbackQueryMessage) {
+        j["replace_callback_query_message"] = *p.replaceCallbackQueryMessage;
+    }
+    return j;
+}
+
 }  // namespace
 
 BotClient::BotClient(std::string token) : token_(std::move(token)) {}
@@ -176,12 +188,72 @@ net::awaitable<json> BotClient::getChatMember(std::int64_t chatId,
 }
 
 net::awaitable<json> BotClient::setMyCommands(
-    std::vector<std::pair<std::string, std::string>> commands) {
+    const std::vector<BotCommand>& commands) {
     json arr = json::array();
-    for (const auto& [cmd, desc] : commands) {
-        arr.push_back({{"command", cmd}, {"description", desc}});
+    for (const auto& c : commands) {
+        json item = {{"command", c.command}, {"description", c.description}};
+        if (c.isEphemeral) {
+            item["is_ephemeral"] = true;
+        }
+        arr.push_back(std::move(item));
     }
     co_return co_await apiCall("setMyCommands", {{"commands", arr.dump()}});
+}
+
+net::awaitable<json> BotClient::sendEphemeralMessage(
+    std::int64_t chatId, const EphemeralMessageParameters& ephemeral,
+    const std::string& text, const json& replyMarkup) {
+    co_await limiter_.beforeSend(chatId);
+    std::map<std::string, std::string> params{
+        {"chat_id", std::to_string(chatId)},
+        {"text", text},
+        {"ephemeral_message_parameters", ephemeralToJson(ephemeral).dump()}};
+    if (!replyMarkup.is_null()) {
+        params.emplace("reply_markup", replyMarkup.dump());
+    }
+    co_return co_await apiCall("sendMessage", std::move(params));
+}
+
+net::awaitable<json> BotClient::editEphemeralMessageText(
+    std::int64_t chatId, std::int64_t receiverUserId,
+    std::int64_t ephemeralMessageId, const std::string& text,
+    const json& replyMarkup) {
+    co_await limiter_.beforeSend(chatId);
+    std::map<std::string, std::string> params{
+        {"chat_id", std::to_string(chatId)},
+        {"receiver_user_id", std::to_string(receiverUserId)},
+        {"ephemeral_message_id", std::to_string(ephemeralMessageId)},
+        {"text", text}};
+    if (!replyMarkup.is_null()) {
+        params.emplace("reply_markup", replyMarkup.dump());
+    }
+    co_return co_await apiCall("editEphemeralMessageText", std::move(params));
+}
+
+net::awaitable<json> BotClient::editEphemeralMessageReplyMarkup(
+    std::int64_t chatId, std::int64_t receiverUserId,
+    std::int64_t ephemeralMessageId, const json& replyMarkup) {
+    co_await limiter_.beforeSend(chatId);
+    std::map<std::string, std::string> params{
+        {"chat_id", std::to_string(chatId)},
+        {"receiver_user_id", std::to_string(receiverUserId)},
+        {"ephemeral_message_id", std::to_string(ephemeralMessageId)}};
+    if (!replyMarkup.is_null()) {
+        params.emplace("reply_markup", replyMarkup.dump());
+    }
+    co_return co_await apiCall("editEphemeralMessageReplyMarkup",
+                               std::move(params));
+}
+
+net::awaitable<json> BotClient::deleteEphemeralMessage(
+    std::int64_t chatId, std::int64_t receiverUserId,
+    std::int64_t ephemeralMessageId) {
+    co_await limiter_.beforeSend(chatId);
+    co_return co_await apiCall(
+        "deleteEphemeralMessage",
+        {{"chat_id", std::to_string(chatId)},
+         {"receiver_user_id", std::to_string(receiverUserId)},
+         {"ephemeral_message_id", std::to_string(ephemeralMessageId)}});
 }
 
 }  // namespace tgbot

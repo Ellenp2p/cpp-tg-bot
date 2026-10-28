@@ -147,6 +147,26 @@ net::awaitable<void> replyAndSweep(BotClient& bot, const json& msg,
     }
 }
 
+// ---- Ephemeral 演示辅助（Bot API 10.2+）----
+
+// 每人每天一个确定性专属码（演示用，同一人当天刷新码不变）
+std::string dailyCode(std::int64_t userId) {
+    const auto days = std::chrono::duration_cast<std::chrono::hours>(
+                          std::chrono::system_clock::now().time_since_epoch())
+                          .count() /
+                      24;
+    auto h = static_cast<unsigned long long>(userId) * 2654435761ULL;
+    h ^= static_cast<unsigned long long>(days);
+    return std::to_string(static_cast<long>(h % 900000ULL) + 100000L);
+}
+
+// ephemeral 消息上的操作键盘：刷新 = 编辑文本，销毁 = 删除 ephemeral
+json ephActionKb() {
+    return {{"inline_keyboard",
+             {{{"text", "🔄 刷新"}, {"callback_data", "eph:refresh"}},
+              {{"text", "🗑 销毁"}, {"callback_data", "eph:destroy"}}}}};
+}
+
 }  // namespace
 
 net::awaitable<void> run(const std::string& token) {
@@ -166,10 +186,14 @@ net::awaitable<void> run(const std::string& token) {
 
     // 设置客户端命令菜单，失败不阻断启动
     try {
-        co_await bot.setMyCommands(
-            {{"start", "开始使用 / 功能介绍"},
-             {"help", "这个机器人能做什么"},
-             {"sticker", "贴纸自动删除：on/off/delay/无参数查状态"}});
+        co_await bot.setMyCommands(std::vector<tgbot::BotCommand>{
+            {"start", "开始使用 / 功能介绍", false},
+            {"help", "这个机器人能做什么", false},
+            {"sticker", "贴纸自动删除：on/off/delay/无参数查状态", false},
+            {"card", "发福利卡片，点按钮领你的专属码（仅你可见）", false},
+            {"eph", "给自己发一条仅你可见的消息", false},
+            {"myid", "查你的用户 ID（隐身命令，别人看不到）", true},
+        });
     } catch (const std::exception& e) {
         spdlog::warn("setMyCommands failed: {}", e.what());
     }
@@ -188,6 +212,9 @@ net::awaitable<void> run(const std::string& token) {
             "• /sticker —— 查看本群状态（开关/时限/我的权限）\n"
             "• /sticker on / off —— 开关贴纸自动删除（群管理员）\n"
             "• /sticker delay <秒> —— 设置删除时限，5–3600 秒（群管理员）\n"
+            "• /card —— 发福利卡片，点按钮领你的专属码（仅你可见）\n"
+            "• /eph <文字> —— 给自己发一条仅你可见的消息\n"
+            "• /myid —— 隐身命令：查你的用户 ID，群里其他人看不到\n"
             "\n"
             "小规则：群里的命令消息会立即清理，我的回复 20 秒后自动删除。"};
     dispatcher.onCommand("start",
@@ -304,6 +331,168 @@ net::awaitable<void> run(const std::string& token) {
         co_await reply("不认识的参数。用法：/sticker on|off|delay <秒>，"
                        "或 /sticker 查看状态");
     });
+
+    // ---- Ephemeral 演示（Bot API 10.2+）：公开入口 + 私人结果 ----
+    // 群里发一条所有人可见的卡片；点按钮的人各自收到一条"只有他能看到"的
+    // ephemeral 消息，可原地替换卡片、可编辑、可删除，群聊记录干干净净。
+
+    // /card —— 发公开福利卡片（任何人的入口；卡片本身保留不被清理）
+    dispatcher.onCommand("card",
+                         [](BotClient& bot,
+                            const json msg) -> net::awaitable<void> {
+                             const auto chatId =
+                                 msg["chat"].value("id", std::int64_t{0});
+                             const auto chatType =
+                                 msg["chat"].value("type", std::string{});
+                             if (chatType != "group" &&
+                                 chatType != "supergroup") {
+                                 co_await replyAndSweep(
+                                     bot, msg, "这个命令只能在群里用。");
+                                 co_return;
+                             }
+                             co_await bot.sendMessage(
+                                 chatId, "🎁 每日福利 · 点击领取",
+                                 {{"inline_keyboard",
+                                   {{{"text", "🎟 领取我的专属码"},
+                                     {"callback_data", "eph:claim"}}}}});
+                             // 与全群命令一致：命令消息立即清理
+                             try {
+                                 co_await bot.deleteMessage(
+                                     chatId,
+                                     msg.value("message_id", std::int64_t{0}));
+                             } catch (const std::exception&) {
+                                 // 已被删/无权限，忽略
+                             }
+                         });
+
+    // 点按钮：用 ephemeral 消息原地替换卡片（仅对点击者生效），
+    // 15 秒窗口内凭 callback_query_id 发送，只投递到点击的那台设备
+    dispatcher.onCallbackQuery(
+        "eph:claim",
+        [](BotClient& bot, const json cq) -> net::awaitable<void> {
+            const auto userId = cq["from"].value("id", std::int64_t{0});
+            const auto chatId =
+                cq["message"]["chat"].value("id", std::int64_t{0});
+            tgbot::EphemeralMessageParameters eph;
+            eph.receiverUserId = userId;
+            eph.callbackQueryId = cq.value("id", std::string{});
+            eph.replaceCallbackQueryMessage = true;
+            co_await bot.sendEphemeralMessage(
+                chatId, eph,
+                "🎉 你的专属码：" + dailyCode(userId) +
+                    "\n这条消息只有你能看到 👀",
+                ephActionKb());
+        });
+
+    // ephemeral 消息上的"刷新"：编辑文本（对 ephemeral 上的按钮回调
+    // 不能 replace，必须用 editEphemeralMessage*）
+    dispatcher.onCallbackQuery(
+        "eph:refresh",
+        [](BotClient& bot, const json cq) -> net::awaitable<void> {
+            const auto userId = cq["from"].value("id", std::int64_t{0});
+            const auto& m = cq["message"];
+            const auto chatId = m["chat"].value("id", std::int64_t{0});
+            const auto ephId =
+                m.value("ephemeral_message_id", std::int64_t{0});
+            if (ephId == 0) {
+                co_return;  // 不是 ephemeral 消息上的按钮
+            }
+            co_await bot.editEphemeralMessageText(
+                chatId, userId, ephId,
+                "🎉 你的专属码：" + dailyCode(userId) + "\n（刚刚刷新过 ✨）",
+                ephActionKb());
+        });
+
+    // ephemeral 消息上的"销毁"
+    dispatcher.onCallbackQuery(
+        "eph:destroy",
+        [](BotClient& bot, const json cq) -> net::awaitable<void> {
+            const auto userId = cq["from"].value("id", std::int64_t{0});
+            const auto& m = cq["message"];
+            const auto chatId = m["chat"].value("id", std::int64_t{0});
+            const auto ephId =
+                m.value("ephemeral_message_id", std::int64_t{0});
+            if (ephId == 0) {
+                co_return;
+            }
+            co_await bot.deleteEphemeralMessage(chatId, userId, ephId);
+        });
+
+    // /eph <文字> —— 模式 B：bot 是群管理员时可主动推送（无 15 秒限制）
+    dispatcher.onCommand(
+        "eph", [](BotClient& bot,
+                  const json msg) -> net::awaitable<void> {
+            const auto chatId = msg["chat"].value("id", std::int64_t{0});
+            const auto chatType =
+                msg["chat"].value("type", std::string{});
+            const auto userId = msg["from"].value("id", std::int64_t{0});
+            if (chatType != "group" && chatType != "supergroup") {
+                co_await replyAndSweep(bot, msg, "这个命令只能在群里用。");
+                co_return;
+            }
+            const std::string text = msg.value("text", "");
+            const auto sp = text.find(' ');
+            const std::string arg =
+                sp == std::string::npos ? "" : text.substr(sp + 1);
+            if (arg.empty()) {
+                co_await replyAndSweep(
+                    bot, msg, "用法：/eph <文字>，给自己发一条只有你能看到的消息。");
+                co_return;
+            }
+            tgbot::EphemeralMessageParameters eph;
+            eph.receiverUserId = userId;
+            std::string failMsg;
+            try {
+                co_await bot.sendEphemeralMessage(chatId, eph,
+                                                  "📩 只有你能看到：" + arg);
+            } catch (const std::exception& e) {
+                failMsg = std::string{"ephemeral 发送失败（需要我是群管理员）："} +
+                          e.what();
+            }
+            if (!failMsg.empty()) {
+                co_await replyAndSweep(bot, msg, failMsg);
+                co_return;
+            }
+            try {
+                co_await bot.deleteMessage(
+                    chatId, msg.value("message_id", std::int64_t{0}));
+            } catch (const std::exception&) {
+                // 忽略
+            }
+        });
+
+    // /myid —— ephemeral command：命令本身群里就没人能看到（is_ephemeral），
+    // bot 再回一条仅本人可见的 ID
+    dispatcher.onCommand(
+        "myid", [](BotClient& bot,
+                   const json msg) -> net::awaitable<void> {
+            const auto chatId = msg["chat"].value("id", std::int64_t{0});
+            const auto chatType =
+                msg["chat"].value("type", std::string{});
+            const auto userId = msg["from"].value("id", std::int64_t{0});
+            tgbot::EphemeralMessageParameters eph;
+            eph.receiverUserId = userId;
+            std::string failMsg;
+            try {
+                co_await bot.sendEphemeralMessage(
+                    chatId, eph, "🆔 你的用户 ID：" + std::to_string(userId));
+            } catch (const std::exception& e) {
+                failMsg = std::string{"ephemeral 发送失败（需要我是群管理员）："} +
+                          e.what();
+            }
+            if (!failMsg.empty()) {
+                co_await replyAndSweep(bot, msg, failMsg);
+                co_return;
+            }
+            if (chatType == "group" || chatType == "supergroup") {
+                try {
+                    co_await bot.deleteMessage(
+                        chatId, msg.value("message_id", std::int64_t{0}));
+                } catch (const std::exception&) {
+                    // 忽略
+                }
+            }
+        });
 
     // 贴纸过期：开启的群里，贴纸发出设定时间后删除
     dispatcher.onAnyMessage(
