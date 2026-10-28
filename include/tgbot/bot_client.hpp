@@ -63,8 +63,10 @@ public:
                                                       int timeout = 30);
     boost::asio::awaitable<nlohmann::json> sendMessage(
         std::int64_t chatId, const std::string& text);
-    // 带 inline/reply 键盘的版本，replyMarkup 形如
-    // {{"inline_keyboard", {{{"text", "..."}, {"callback_data", "..."}}}}}
+    // 带 inline 键盘的版本，replyMarkup 形如
+    // {{"inline_keyboard", json::array({{{{"text", "..."}, {"callback_data", "..."}}}})}}
+    // （inline_keyboard 是"行数组的数组"，最内层是按钮对象；
+    //   务必用 json::array 明确层级，裸写嵌套大括号极易少一层导致 API 400）
     boost::asio::awaitable<nlohmann::json> sendMessage(
         std::int64_t chatId, const std::string& text,
         const nlohmann::json& replyMarkup);

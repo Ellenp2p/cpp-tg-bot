@@ -85,6 +85,20 @@ net::awaitable<json> BotClient::apiCall(
                                        method + ": " +
                                            j.value("description", "unknown"));
             }
+            // 非 200：尝试解析 Telegram 返回的具体错误描述，
+            // 避免抛出的异常只剩干巴巴的 HTTP 状态码
+            // （400 时服务端会说明是哪个参数有问题）
+            long apiCode = resp.status;
+            std::string apiDesc = "HTTP " + std::to_string(resp.status);
+            try {
+                const auto j = json::parse(resp.body);
+                if (j.is_object() && !j.value("ok", true)) {
+                    apiCode = j.value("error_code", resp.status);
+                    apiDesc = j.value("description", apiDesc);
+                }
+            } catch (const std::exception&) {
+                // 响应体不是 JSON，保持 HTTP 描述
+            }
             // 429 时优先遵循 Telegram 返回的 retry_after，而不是自己的退避
             if (resp.status == 429) {
                 try {
@@ -98,9 +112,7 @@ net::awaitable<json> BotClient::apiCall(
             }
             const bool retryable = (resp.status == 429 || resp.status >= 500);
             if (!retryable || attempt > kMaxRetries) {
-                throw TelegramApiError(
-                    resp.status, method + ": HTTP " +
-                                     std::to_string(resp.status));
+                throw TelegramApiError(apiCode, method + ": " + apiDesc);
             }
         } catch (const boost::system::system_error& e) {
             if (attempt > kMaxRetries) {
