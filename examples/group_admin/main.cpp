@@ -163,10 +163,10 @@ std::string dailyCode(std::int64_t userId) {
 // ephemeral 消息上的操作键盘：刷新 = 编辑文本，销毁 = 删除 ephemeral
 json ephActionKb() {
     return {{"inline_keyboard",
-             json::array({{{{{"text", "🔄 刷新"},
+             json::array({{{{"text", "🔄 刷新"},
                              {"callback_data", "eph:refresh"}},
                             {{"text", "🗑 销毁"},
-                             {"callback_data", "eph:destroy"}}}}})}};
+                             {"callback_data", "eph:destroy"}}}})}};
 }
 
 }  // namespace
