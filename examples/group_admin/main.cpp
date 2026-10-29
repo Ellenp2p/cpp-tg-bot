@@ -42,6 +42,13 @@ constexpr long kMaxDelaySec = 3600;
 constexpr auto kGroupMsgTtl = std::chrono::seconds{20};  // 群内命令消息/回复的存活时间
 constexpr const char* kStateDb = "group_admin_state.db";
 
+// 默认欢迎词模板；{name} = 新成员称呼（@用户名或名字），{group} = 群名
+constexpr const char* kDefaultWelcome =
+    "欢迎 {name} 加入「{group}」🎉\n"
+    "本群由我协助管理：贴纸超时会自动清理，福利卡片点按钮领取"
+    "（仅本人可见）。\n"
+    "私聊我发 /help 可以看我的全部功能～";
+
 // 每个群的功能开关（贴纸删除 + 新成员欢迎），基于 StateStore 键值存储
 // （SQLite 持久化，重启不丢）
 class GroupState {
@@ -90,6 +97,19 @@ public:
         }
     }
 
+    // 自定义欢迎词；未设置返回 nullopt（用默认模板）
+    std::optional<std::string> welcomeText(std::int64_t chatId) const {
+        return store_.get(welcomeTextKey(chatId));
+    }
+
+    void setWelcomeText(std::int64_t chatId, std::string text) {
+        store_.set(welcomeTextKey(chatId), std::move(text));
+    }
+
+    void resetWelcomeText(std::int64_t chatId) {
+        store_.erase(welcomeTextKey(chatId));
+    }
+
 private:
     static std::string key(std::int64_t chatId) {
         return "sticker_expire:" + std::to_string(chatId);
@@ -99,6 +119,9 @@ private:
     }
     static std::string welcomeKey(std::int64_t chatId) {
         return "welcome_enabled:" + std::to_string(chatId);
+    }
+    static std::string welcomeTextKey(std::int64_t chatId) {
+        return "welcome_text:" + std::to_string(chatId);
     }
 
     tgbot::StateStore& store_;
@@ -187,6 +210,26 @@ json ephActionKb() {
                              {"callback_data", "eph:destroy"}}}})}};
 }
 
+void replaceAllInplace(std::string& s, const std::string& from,
+                       const std::string& to) {
+    if (from.empty()) {
+        return;
+    }
+    std::size_t pos = 0;
+    while ((pos = s.find(from, pos)) != std::string::npos) {
+        s.replace(pos, from.size(), to);
+        pos += to.size();
+    }
+}
+
+// 渲染欢迎词模板：{name} = 新成员称呼，{group} = 群名
+std::string renderWelcome(std::string tpl, const std::string& name,
+                          const std::string& group) {
+    replaceAllInplace(tpl, "{name}", name);
+    replaceAllInplace(tpl, "{group}", group);
+    return tpl;
+}
+
 }  // namespace
 
 net::awaitable<void> run(const std::string& token) {
@@ -210,7 +253,7 @@ net::awaitable<void> run(const std::string& token) {
             {"start", "开始使用 / 功能介绍", false},
             {"help", "这个机器人能做什么", false},
             {"sticker", "贴纸自动删除：on/off/delay/无参数查状态", false},
-            {"welcome", "新成员欢迎语：on/off/无参数查状态（群管理员）", false},
+            {"welcome", "新成员欢迎：on/off/set <文案>/reset/查状态（群管理员）", false},
             {"card", "发福利卡片，点按钮领你的专属码（仅你可见）", false},
             {"eph", "给自己发一条仅你可见的消息", false},
             {"myid", "查你的用户 ID（隐身命令，别人看不到）", true},
@@ -235,9 +278,10 @@ net::awaitable<void> run(const std::string& token) {
             "• /sticker delay <秒> —— 贴纸删除时限，5–3600 秒（群管理员）\n"
             "• /sticker —— 查看本群状态（开关/时限/我的权限）\n"
             "\n"
-            "🙋 新成员欢迎\n"
-            "• /welcome on / off —— 开关入群欢迎语（群管理员，默认关闭）\n"
-            "• /welcome —— 查看本群欢迎语开关状态\n"
+            "🙋 新成员欢迎（私密送达，仅新成员本人可见，不刷屏）\n"
+            "• /welcome on / off —— 开关欢迎语（群管理员，默认关闭）\n"
+            "• /welcome set <文案> —— 自定义欢迎词（{name}=对方，{group}=群名）\n"
+            "• /welcome —— 查看欢迎语状态\n"
             "\n"
             "🎁 群内私密消息（ephemeral，只有你自己能看到）\n"
             "• /card —— 发公开福利卡片，点按钮领取你的专属码\n"
@@ -252,7 +296,8 @@ net::awaitable<void> run(const std::string& token) {
             "大家好，我是群管理机器人 🤖\n"
             "🧹 群内容管理：管理员发 /sticker on 开启贴纸自动删除"
             "（默认 60 秒，/sticker delay <秒> 可改），/sticker 查看状态\n"
-            "🙋 新成员欢迎：管理员发 /welcome on 开启\n"
+            "🙋 新成员欢迎：/welcome on 开启（私密送达，仅本人可见），"
+            "/welcome set 定制文案\n"
             "🎁 群内私密消息：/card 发福利卡片（点按钮只有本人可见）、"
             "/myid 隐身查 ID\n"
             "私聊我发 /help 看全部功能。需要给我“删除消息”权限才能干活～"};
@@ -371,7 +416,8 @@ net::awaitable<void> run(const std::string& token) {
                        "或 /sticker 查看状态");
     });
 
-    // /welcome —— 无参数：欢迎语开关状态（任何人）；on/off：仅群管理员
+    // /welcome —— 无参数：欢迎语状态（任何人）；on/off/set/reset：仅群管理员
+    // 欢迎消息以 ephemeral 私密投递给新成员本人，不刷屏；支持自定义文案。
     dispatcher.onCommand("welcome",
                          [&state](BotClient& bot,
                                   const json msg) -> net::awaitable<void> {
@@ -387,15 +433,22 @@ net::awaitable<void> run(const std::string& token) {
         const std::string text = msg.value("text", "");
         const auto sp = text.find(' ');
         const std::string arg = sp == std::string::npos ? "" : text.substr(sp + 1);
+        const auto groupTitle =
+            msg["chat"].value("title", std::string{"本群"});
 
+        // 无参数：状态面板（任何人可用）
         if (arg.empty()) {
+            const auto custom = state.welcomeText(chatId);
             co_await replyAndSweep(
                 bot, msg,
                 std::string{"新成员欢迎语：" +
                             (state.welcomeEnabled(chatId)
-                                 ? std::string{"已开启 ✅ 新成员进群时我会发欢迎消息"}
+                                 ? std::string{"已开启 ✅（私密送达，仅新成员本人可见）"}
                                  : std::string{"已关闭（默认）"}) +
-                            "\n管理员：/welcome on 开启，/welcome off 关闭"});
+                            "\n文案：" +
+                            (custom ? std::string{"自定义（/welcome reset 恢复默认）"}
+                                    : std::string{"默认模板"}) +
+                            "\n管理员：/welcome on|off|set <文案>|reset"});
             co_return;
         }
 
@@ -408,7 +461,9 @@ net::awaitable<void> run(const std::string& token) {
 
         if (arg == "on") {
             state.setWelcome(chatId, true);
-            co_await replyAndSweep(bot, msg, "已开启：新成员进群时我会发欢迎消息。");
+            co_await replyAndSweep(bot, msg,
+                                   "已开启：新成员进群时我会私密发欢迎消息"
+                                   "（仅本人可见，不刷屏）。");
             co_return;
         }
         if (arg == "off") {
@@ -416,8 +471,36 @@ net::awaitable<void> run(const std::string& token) {
             co_await replyAndSweep(bot, msg, "已关闭：不再发欢迎消息。");
             co_return;
         }
-        co_await replyAndSweep(bot, msg,
-                               "用法：/welcome on|off，或 /welcome 查看状态");
+        if (arg == "reset") {
+            state.resetWelcomeText(chatId);
+            co_await replyAndSweep(bot, msg, "已恢复默认欢迎词。");
+            co_return;
+        }
+        // /welcome set <文案> —— 自定义欢迎词，{name}/{group} 为占位符
+        if (arg.rfind("set", 0) == 0 && arg.size() > 3 && arg[3] == ' ') {
+            auto tpl = arg.substr(4);
+            // 去掉文案前多余的空格
+            while (!tpl.empty() && tpl.front() == ' ') {
+                tpl.erase(tpl.begin());
+            }
+            constexpr std::size_t kMaxTpl = 1000;
+            if (tpl.empty() || tpl.size() > kMaxTpl) {
+                co_await replyAndSweep(
+                    bot, msg,
+                    "用法：/welcome set <欢迎词>，1–1000 字，"
+                    "可用占位符：{name}=新成员称呼，{group}=群名");
+                co_return;
+            }
+            state.setWelcomeText(chatId, tpl);
+            co_await replyAndSweep(
+                bot, msg,
+                "已设置自定义欢迎词 ✅（仅新成员本人可见）\n预览：\n" +
+                    renderWelcome(tpl, "@示例用户", groupTitle));
+            co_return;
+        }
+        co_await replyAndSweep(
+            bot, msg,
+            "用法：/welcome on|off|set <文案>|reset，或 /welcome 查看状态");
     });
 
     // ---- Ephemeral 演示（Bot API 10.2+）：公开入口 + 私人结果 ----
@@ -583,8 +666,9 @@ net::awaitable<void> run(const std::string& token) {
             }
         });
 
-    // 成员入群：bot 自己进群时发自我介绍（常驻说明书）；开启 /welcome 后
-    // 给新成员发欢迎消息。这两条都不参与 20 秒清理。
+    // 成员入群：bot 自己进群时发自我介绍（常驻说明书，不参与清理）；
+    // 开启 /welcome 后，给每位新成员单独私密投递（ephemeral）欢迎消息，
+    // 群里其他人完全无感，不刷屏。
     dispatcher.onAnyMessage(
         [&state, botId, introText](BotClient& bot,
                                    const json msg) -> net::awaitable<void> {
@@ -593,9 +677,12 @@ net::awaitable<void> run(const std::string& token) {
                 co_return;
             }
             const auto chatId = msg["chat"].value("id", std::int64_t{0});
+            const auto groupTitle =
+                msg["chat"].value("title", std::string{"本群"});
 
             bool meJoined = false;
-            std::vector<std::string> names;
+            // (user id, 展示名)：ephemeral 按人投递，需要各自的 id
+            std::vector<std::pair<std::int64_t, std::string>> joiners;
             for (const auto& u : *it) {
                 if (u.value("id", std::int64_t{0}) == botId) {
                     meJoined = true;
@@ -605,30 +692,42 @@ net::awaitable<void> run(const std::string& token) {
                     continue;  // 不欢迎其他 bot
                 }
                 const auto username = u.value("username", std::string{});
-                names.push_back(username.empty()
-                                    ? u.value("first_name",
-                                              std::string{"新朋友"})
-                                    : "@" + username);
+                joiners.emplace_back(
+                    u.value("id", std::int64_t{0}),
+                    username.empty()
+                        ? u.value("first_name", std::string{"新朋友"})
+                        : "@" + username);
             }
 
             if (meJoined) {
                 spdlog::info("joined group {}, sending intro", chatId);
                 co_await bot.sendMessage(chatId, introText);
             }
-            if (!names.empty() && state.welcomeEnabled(chatId)) {
-                std::string greet = names.front();
-                for (std::size_t i = 1; i < names.size(); ++i) {
-                    greet += "、" + names[i];
+            if (joiners.empty() || !state.welcomeEnabled(chatId)) {
+                co_return;
+            }
+
+            const auto tpl = state.welcomeText(chatId).value_or(kDefaultWelcome);
+            for (const auto& [userId, name] : joiners) {
+                const auto welcome = renderWelcome(tpl, name, groupTitle);
+                tgbot::EphemeralMessageParameters eph;
+                eph.receiverUserId = userId;
+                std::string failMsg;
+                try {
+                    co_await bot.sendEphemeralMessage(chatId, eph, welcome);
+                    spdlog::info("ephemeral welcome sent: chat={} user={}",
+                                 chatId, userId);
+                } catch (const std::exception& e) {
+                    failMsg = e.what();
                 }
-                spdlog::info("welcoming {} new member(s) in {}", names.size(),
-                             chatId);
-                co_await bot.sendMessage(
-                    chatId,
-                    "欢迎 " + greet +
-                        " 加入本群 🎉\n"
-                        "本群由我协助管理：贴纸超时会自动清理，"
-                        "福利卡片点按钮领取（仅本人可见）。\n"
-                        "私聊我发 /help 可以看我的全部功能～");
+                if (!failMsg.empty()) {
+                    // bot 非管理员时 mode B 不可用：降级为公开普通消息兜底
+                    spdlog::warn(
+                        "ephemeral welcome failed (chat={} user={}): {}; "
+                        "fallback to public message",
+                        chatId, userId, failMsg);
+                    co_await bot.sendMessage(chatId, welcome);
+                }
             }
         });
 
