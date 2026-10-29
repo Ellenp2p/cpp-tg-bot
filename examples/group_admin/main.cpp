@@ -28,6 +28,7 @@
 #include <exception>
 #include <iostream>
 #include <string>
+#include <vector>
 
 namespace net = boost::asio;
 using nlohmann::json;
@@ -41,7 +42,7 @@ constexpr long kMaxDelaySec = 3600;
 constexpr auto kGroupMsgTtl = std::chrono::seconds{20};  // 群内命令消息/回复的存活时间
 constexpr const char* kStateDb = "group_admin_state.db";
 
-// 每个群的贴纸设置（开关 + 删除时限），基于 StateStore 键值存储
+// 每个群的功能开关（贴纸删除 + 新成员欢迎），基于 StateStore 键值存储
 // （SQLite 持久化，重启不丢）
 class GroupState {
 public:
@@ -76,12 +77,28 @@ public:
         store_.set(delayKey(chatId), std::to_string(seconds));
     }
 
+    // 新成员欢迎语开关（默认关闭，管理员 /welcome on 开启）
+    bool welcomeEnabled(std::int64_t chatId) const {
+        return store_.get(welcomeKey(chatId)).has_value();
+    }
+
+    void setWelcome(std::int64_t chatId, bool enabled) {
+        if (enabled) {
+            store_.set(welcomeKey(chatId), "1");
+        } else {
+            store_.erase(welcomeKey(chatId));
+        }
+    }
+
 private:
     static std::string key(std::int64_t chatId) {
         return "sticker_expire:" + std::to_string(chatId);
     }
     static std::string delayKey(std::int64_t chatId) {
         return "sticker_delay:" + std::to_string(chatId);
+    }
+    static std::string welcomeKey(std::int64_t chatId) {
+        return "welcome_enabled:" + std::to_string(chatId);
     }
 
     tgbot::StateStore& store_;
@@ -193,6 +210,7 @@ net::awaitable<void> run(const std::string& token) {
             {"start", "开始使用 / 功能介绍", false},
             {"help", "这个机器人能做什么", false},
             {"sticker", "贴纸自动删除：on/off/delay/无参数查状态", false},
+            {"welcome", "新成员欢迎语：on/off/无参数查状态（群管理员）", false},
             {"card", "发福利卡片，点按钮领你的专属码（仅你可见）", false},
             {"eph", "给自己发一条仅你可见的消息", false},
             {"myid", "查你的用户 ID（隐身命令，别人看不到）", true},
@@ -217,6 +235,10 @@ net::awaitable<void> run(const std::string& token) {
             "• /sticker delay <秒> —— 贴纸删除时限，5–3600 秒（群管理员）\n"
             "• /sticker —— 查看本群状态（开关/时限/我的权限）\n"
             "\n"
+            "🙋 新成员欢迎\n"
+            "• /welcome on / off —— 开关入群欢迎语（群管理员，默认关闭）\n"
+            "• /welcome —— 查看本群欢迎语开关状态\n"
+            "\n"
             "🎁 群内私密消息（ephemeral，只有你自己能看到）\n"
             "• /card —— 发公开福利卡片，点按钮领取你的专属码\n"
             "• /eph <文字> —— 给自己发一条私密消息\n"
@@ -230,6 +252,7 @@ net::awaitable<void> run(const std::string& token) {
             "大家好，我是群管理机器人 🤖\n"
             "🧹 群内容管理：管理员发 /sticker on 开启贴纸自动删除"
             "（默认 60 秒，/sticker delay <秒> 可改），/sticker 查看状态\n"
+            "🙋 新成员欢迎：管理员发 /welcome on 开启\n"
             "🎁 群内私密消息：/card 发福利卡片（点按钮只有本人可见）、"
             "/myid 隐身查 ID\n"
             "私聊我发 /help 看全部功能。需要给我“删除消息”权限才能干活～"};
@@ -346,6 +369,55 @@ net::awaitable<void> run(const std::string& token) {
 
         co_await reply("不认识的参数。用法：/sticker on|off|delay <秒>，"
                        "或 /sticker 查看状态");
+    });
+
+    // /welcome —— 无参数：欢迎语开关状态（任何人）；on/off：仅群管理员
+    dispatcher.onCommand("welcome",
+                         [&state](BotClient& bot,
+                                  const json msg) -> net::awaitable<void> {
+        const auto chatId = msg["chat"].value("id", std::int64_t{0});
+        const auto chatType =
+            msg["chat"].value("type", std::string{});
+
+        if (chatType != "group" && chatType != "supergroup") {
+            co_await replyAndSweep(bot, msg, "这个命令只能在群里用。");
+            co_return;
+        }
+
+        const std::string text = msg.value("text", "");
+        const auto sp = text.find(' ');
+        const std::string arg = sp == std::string::npos ? "" : text.substr(sp + 1);
+
+        if (arg.empty()) {
+            co_await replyAndSweep(
+                bot, msg,
+                std::string{"新成员欢迎语：" +
+                            (state.welcomeEnabled(chatId)
+                                 ? std::string{"已开启 ✅ 新成员进群时我会发欢迎消息"}
+                                 : std::string{"已关闭（默认）"}) +
+                            "\n管理员：/welcome on 开启，/welcome off 关闭"});
+            co_return;
+        }
+
+        // 以下变更操作仅群管理员可用
+        const auto userId = msg["from"].value("id", std::int64_t{0});
+        if (!co_await isGroupAdmin(bot, chatId, userId)) {
+            co_await replyAndSweep(bot, msg, "只有群管理员可以修改设置。");
+            co_return;
+        }
+
+        if (arg == "on") {
+            state.setWelcome(chatId, true);
+            co_await replyAndSweep(bot, msg, "已开启：新成员进群时我会发欢迎消息。");
+            co_return;
+        }
+        if (arg == "off") {
+            state.setWelcome(chatId, false);
+            co_await replyAndSweep(bot, msg, "已关闭：不再发欢迎消息。");
+            co_return;
+        }
+        co_await replyAndSweep(bot, msg,
+                               "用法：/welcome on|off，或 /welcome 查看状态");
     });
 
     // ---- Ephemeral 演示（Bot API 10.2+）：公开入口 + 私人结果 ----
@@ -511,24 +583,53 @@ net::awaitable<void> run(const std::string& token) {
             }
         });
 
-    // bot 入群：发自我介绍（保留不清理，方便管理员随时查看怎么开功能）
+    // 成员入群：bot 自己进群时发自我介绍（常驻说明书）；开启 /welcome 后
+    // 给新成员发欢迎消息。这两条都不参与 20 秒清理。
     dispatcher.onAnyMessage(
-        [botId, introText](BotClient& bot,
-                           const json msg) -> net::awaitable<void> {
+        [&state, botId, introText](BotClient& bot,
+                                   const json msg) -> net::awaitable<void> {
             const auto it = msg.find("new_chat_members");
             if (it == msg.end() || !it->is_array()) {
                 co_return;
             }
-            const bool meJoined = std::any_of(
-                it->begin(), it->end(), [botId](const json& u) {
-                    return u.value("id", std::int64_t{0}) == botId;
-                });
-            if (!meJoined) {
-                co_return;
-            }
             const auto chatId = msg["chat"].value("id", std::int64_t{0});
-            spdlog::info("joined group {}, sending intro", chatId);
-            co_await bot.sendMessage(chatId, introText);
+
+            bool meJoined = false;
+            std::vector<std::string> names;
+            for (const auto& u : *it) {
+                if (u.value("id", std::int64_t{0}) == botId) {
+                    meJoined = true;
+                    continue;
+                }
+                if (u.value("is_bot", false)) {
+                    continue;  // 不欢迎其他 bot
+                }
+                const auto username = u.value("username", std::string{});
+                names.push_back(username.empty()
+                                    ? u.value("first_name",
+                                              std::string{"新朋友"})
+                                    : "@" + username);
+            }
+
+            if (meJoined) {
+                spdlog::info("joined group {}, sending intro", chatId);
+                co_await bot.sendMessage(chatId, introText);
+            }
+            if (!names.empty() && state.welcomeEnabled(chatId)) {
+                std::string greet = names.front();
+                for (std::size_t i = 1; i < names.size(); ++i) {
+                    greet += "、" + names[i];
+                }
+                spdlog::info("welcoming {} new member(s) in {}", names.size(),
+                             chatId);
+                co_await bot.sendMessage(
+                    chatId,
+                    "欢迎 " + greet +
+                        " 加入本群 🎉\n"
+                        "本群由我协助管理：贴纸超时会自动清理，"
+                        "福利卡片点按钮领取（仅本人可见）。\n"
+                        "私聊我发 /help 可以看我的全部功能～");
+            }
         });
 
     // 贴纸过期：开启的群里，贴纸发出设定时间后删除
