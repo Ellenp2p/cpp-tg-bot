@@ -21,6 +21,7 @@
 
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <chrono>
 #include <csignal>
 #include <cstdlib>
@@ -205,20 +206,33 @@ net::awaitable<void> run(const std::string& token) {
 
     tgbot::Dispatcher dispatcher;
 
-    // /start /help —— 私聊欢迎语 + 功能说明（群里同样可用，但会被 20 秒清理）
+    // /start /help —— 欢迎语 + 功能总览（群里同样可用，但会被 20 秒清理）
     const auto helpText =
         std::string{
             "你好，我是群管理机器人 🤖\n"
-            "把我拉进群、设为管理员（勾选“删除消息”）后，我可以：\n"
-            "• 自动删除群里过期的贴纸（默认 60 秒）\n"
-            "• /sticker —— 查看本群状态（开关/时限/我的权限）\n"
+            "把我拉进群、设为管理员（勾选“删除消息”）后，我可以帮你：\n"
+            "\n"
+            "🧹 群内容管理\n"
             "• /sticker on / off —— 开关贴纸自动删除（群管理员）\n"
-            "• /sticker delay <秒> —— 设置删除时限，5–3600 秒（群管理员）\n"
-            "• /card —— 发福利卡片，点按钮领你的专属码（仅你可见）\n"
-            "• /eph <文字> —— 给自己发一条仅你可见的消息\n"
+            "• /sticker delay <秒> —— 贴纸删除时限，5–3600 秒（群管理员）\n"
+            "• /sticker —— 查看本群状态（开关/时限/我的权限）\n"
+            "\n"
+            "🎁 群内私密消息（ephemeral，只有你自己能看到）\n"
+            "• /card —— 发公开福利卡片，点按钮领取你的专属码\n"
+            "• /eph <文字> —— 给自己发一条私密消息\n"
             "• /myid —— 隐身命令：查你的用户 ID，群里其他人看不到\n"
             "\n"
             "小规则：群里的命令消息会立即清理，我的回复 20 秒后自动删除。"};
+
+    // bot 被拉进群时的自我介绍：让管理员一眼知道怎么开功能。这条不清理。
+    const auto introText =
+        std::string{
+            "大家好，我是群管理机器人 🤖\n"
+            "🧹 群内容管理：管理员发 /sticker on 开启贴纸自动删除"
+            "（默认 60 秒，/sticker delay <秒> 可改），/sticker 查看状态\n"
+            "🎁 群内私密消息：/card 发福利卡片（点按钮只有本人可见）、"
+            "/myid 隐身查 ID\n"
+            "私聊我发 /help 看全部功能。需要给我“删除消息”权限才能干活～"};
     dispatcher.onCommand("start",
                          [helpText](BotClient& bot,
                                     const json msg) -> net::awaitable<void> {
@@ -495,6 +509,26 @@ net::awaitable<void> run(const std::string& token) {
                     // 忽略
                 }
             }
+        });
+
+    // bot 入群：发自我介绍（保留不清理，方便管理员随时查看怎么开功能）
+    dispatcher.onAnyMessage(
+        [botId, introText](BotClient& bot,
+                           const json msg) -> net::awaitable<void> {
+            const auto it = msg.find("new_chat_members");
+            if (it == msg.end() || !it->is_array()) {
+                co_return;
+            }
+            const bool meJoined = std::any_of(
+                it->begin(), it->end(), [botId](const json& u) {
+                    return u.value("id", std::int64_t{0}) == botId;
+                });
+            if (!meJoined) {
+                co_return;
+            }
+            const auto chatId = msg["chat"].value("id", std::int64_t{0});
+            spdlog::info("joined group {}, sending intro", chatId);
+            co_await bot.sendMessage(chatId, introText);
         });
 
     // 贴纸过期：开启的群里，贴纸发出设定时间后删除
