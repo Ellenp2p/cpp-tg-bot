@@ -100,6 +100,18 @@ public:
     boost::asio::awaitable<nlohmann::json> deleteEphemeralMessage(
         std::int64_t chatId, std::int64_t receiverUserId,
         std::int64_t ephemeralMessageId);
+    // 群信息（ChatFullInfo，含默认权限 "permissions"）；静默模式开启前
+    // 快照原权限用
+    boost::asio::awaitable<nlohmann::json> getChat(std::int64_t chatId);
+    // 设置群默认权限（对所有非管理员生效）。需要 bot 有"限制成员"管理员
+    // 权限，成功返回 true。permissions 形如 {{"can_send_messages", false}}
+    boost::asio::awaitable<nlohmann::json> setChatPermissions(
+        std::int64_t chatId, const nlohmann::json& permissions);
+    // 成员级权限（覆盖群默认权限）：静默白名单放行/收回。
+    // untilDate > 0 为临时限制（Unix 时间），0 为永久
+    boost::asio::awaitable<nlohmann::json> restrictChatMember(
+        std::int64_t chatId, std::int64_t userId,
+        const nlohmann::json& permissions, std::int64_t untilDate = 0);
     // 设置客户端命令菜单（输入框旁 "/" 自动补全列表），启动时调用一次即可。
     // isEphemeral=true 的命令是 ephemeral command（Bot API 10.2+）：用户把它
     // 发到群里时，其他成员（和其他 bot）完全看不到这条命令消息
