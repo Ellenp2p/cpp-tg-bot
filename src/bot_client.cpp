@@ -268,4 +268,32 @@ net::awaitable<json> BotClient::deleteEphemeralMessage(
          {"ephemeral_message_id", std::to_string(ephemeralMessageId)}});
 }
 
+net::awaitable<json> BotClient::getChat(std::int64_t chatId) {
+    co_return co_await apiCall("getChat",
+                               {{"chat_id", std::to_string(chatId)}});
+}
+
+net::awaitable<json> BotClient::setChatPermissions(
+    std::int64_t chatId, const json& permissions) {
+    co_await limiter_.beforeSend(chatId);
+    co_return co_await apiCall(
+        "setChatPermissions",
+        {{"chat_id", std::to_string(chatId)},
+         {"permissions", permissions.dump()}});
+}
+
+net::awaitable<json> BotClient::restrictChatMember(
+    std::int64_t chatId, std::int64_t userId, const json& permissions,
+    std::int64_t untilDate) {
+    co_await limiter_.beforeSend(chatId);
+    std::map<std::string, std::string> params{
+        {"chat_id", std::to_string(chatId)},
+        {"user_id", std::to_string(userId)},
+        {"permissions", permissions.dump()}};
+    if (untilDate > 0) {
+        params.emplace("until_date", std::to_string(untilDate));
+    }
+    co_return co_await apiCall("restrictChatMember", std::move(params));
+}
+
 }  // namespace tgbot

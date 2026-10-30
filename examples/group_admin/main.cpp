@@ -1,16 +1,21 @@
 // 群管理机器人示例（基于 tgbot 框架）
 //
-// 功能：开启后，群里任何人发的贴纸会在设定时间后自动删除（默认 60 秒）。
-// 控制（仅群管理员）：/sticker on 开启，/sticker off 关闭，
-//       /sticker delay <秒> 设置删除时限（5–3600 秒）；
-//       /sticker 或 /sticker status（任何人）查看状态面板：
-//       功能开关、删除时限、机器人在群里的权限。
-//       设置持久化到 group_admin_state.db（SQLite），重启不丢。
+// 功能：
+// 🧹 贴纸自动删除：开启后，群里任何人发的贴纸会在设定时间后自动删除
+//    （默认 60 秒）。/sticker on|off|delay <秒>|查状态（变更仅群管理员）。
+// 🙋 新成员欢迎：/welcome on 后以 ephemeral 私密消息欢迎新成员（仅本人可见，
+//    不刷屏）；/welcome set <文案> 自定义（{name}/{group} 占位符）。
+// 🤐 静默模式：/silent on 修改群默认权限实现全员禁言（非管理员输入框被禁用），
+//    /silent allow 回复某人放行、deny 收回、list 查白名单；开启前自动快照
+//    原权限，/silent off 精确恢复。需要 bot 有"限制成员"管理员权限。
+// 🎁 ephemeral 演示：/card 公开卡片 + 私人结果、/eph、/myid。
+//    设置持久化到 group_admin_state.db（SQLite），重启不丢。
 // 清理：群里的命令消息立即删除，机器人的回复在 20 秒后删除，避免刷屏。
 // 私聊：/start、/help 查看功能介绍。
 //
 // 用法：./group_admin <bot-token>   或   TG_BOT_TOKEN=... ./group_admin
-// 注意：机器人需要被设为群管理员（至少有"删除消息"权限），否则删不掉。
+// 注意：机器人需要被设为群管理员（"删除消息"，静默模式还需要"限制成员"），
+//       否则对应功能会失败并在日志中给出具体原因。
 
 #include <tgbot/tg_bot.hpp>
 
@@ -110,6 +115,68 @@ public:
         store_.erase(welcomeTextKey(chatId));
     }
 
+    // ---- 静默模式（全员禁言）----
+    bool silentEnabled(std::int64_t chatId) const {
+        return store_.get(silentKey(chatId)).has_value();
+    }
+
+    void setSilent(std::int64_t chatId, bool enabled) {
+        if (enabled) {
+            store_.set(silentKey(chatId), "1");
+        } else {
+            store_.erase(silentKey(chatId));
+        }
+    }
+
+    // 白名单：静默模式下仍被允许发言的用户 id 列表
+    std::vector<std::int64_t> silentAllowlist(std::int64_t chatId) const {
+        const auto v = store_.get(silentAllowKey(chatId));
+        if (!v) {
+            return {};
+        }
+        std::vector<std::int64_t> ids;
+        try {
+            for (const auto& e : json::parse(*v)) {
+                if (e.is_number_integer()) {
+                    ids.push_back(e.get<std::int64_t>());
+                }
+            }
+        } catch (const std::exception&) {
+            // 数据异常按空名单处理
+        }
+        return ids;
+    }
+
+    void addSilentAllow(std::int64_t chatId, std::int64_t userId) {
+        auto ids = silentAllowlist(chatId);
+        if (std::find(ids.begin(), ids.end(), userId) == ids.end()) {
+            ids.push_back(userId);
+            store_.set(silentAllowKey(chatId), json(ids).dump());
+        }
+    }
+
+    void removeSilentAllow(std::int64_t chatId, std::int64_t userId) {
+        auto ids = silentAllowlist(chatId);
+        const auto it = std::find(ids.begin(), ids.end(), userId);
+        if (it != ids.end()) {
+            ids.erase(it);
+            store_.set(silentAllowKey(chatId), json(ids).dump());
+        }
+    }
+
+    // 静默开启前的群默认权限快照（关闭时原样恢复）
+    std::optional<std::string> silentSnapshot(std::int64_t chatId) const {
+        return store_.get(silentSnapKey(chatId));
+    }
+
+    void setSilentSnapshot(std::int64_t chatId, std::string snapshot) {
+        store_.set(silentSnapKey(chatId), std::move(snapshot));
+    }
+
+    void clearSilentSnapshot(std::int64_t chatId) {
+        store_.erase(silentSnapKey(chatId));
+    }
+
 private:
     static std::string key(std::int64_t chatId) {
         return "sticker_expire:" + std::to_string(chatId);
@@ -122,6 +189,15 @@ private:
     }
     static std::string welcomeTextKey(std::int64_t chatId) {
         return "welcome_text:" + std::to_string(chatId);
+    }
+    static std::string silentKey(std::int64_t chatId) {
+        return "silent:" + std::to_string(chatId);
+    }
+    static std::string silentAllowKey(std::int64_t chatId) {
+        return "silent_allow:" + std::to_string(chatId);
+    }
+    static std::string silentSnapKey(std::int64_t chatId) {
+        return "silent_snap:" + std::to_string(chatId);
     }
 
     tgbot::StateStore& store_;
@@ -230,6 +306,52 @@ std::string renderWelcome(std::string tpl, const std::string& name,
     return tpl;
 }
 
+// ---- 静默模式（硬禁言）----
+
+// 静默开启后的群默认权限：全员禁言，只保留邀请（can_send_messages=false
+// 会连带关闭所有发送类权限）
+json mutedPerms() {
+    return {{"can_send_messages", false}, {"can_invite_users", true}};
+}
+
+// 白名单成员权限：完整放行发言
+json allowedPerms() {
+    return {{"can_send_messages", true}};
+}
+
+// 无快照可用时的兜底恢复权限（正常路径用开启前快照，不会走到这里）
+json defaultOpenPerms() {
+    return {{"can_send_messages", true},
+            {"can_send_polls", true},
+            {"can_invite_users", true},
+            {"can_pin_messages", true}};
+}
+
+// 从"回复某人"的消息里取目标用户 id（bot 不算）；取不到返回 0
+std::int64_t targetFromReply(const json& msg) {
+    const auto rt = msg.find("reply_to_message");
+    if (rt == msg.end() || !rt->is_object()) {
+        return 0;
+    }
+    const auto from = rt->find("from");
+    if (from == rt->end() || !from->is_object() ||
+        from->value("is_bot", false)) {
+        return 0;
+    }
+    return from->value("id", std::int64_t{0});
+}
+
+std::string joinIds(const std::vector<std::int64_t>& ids) {
+    std::string s;
+    for (std::size_t i = 0; i < ids.size(); ++i) {
+        if (i > 0) {
+            s += ", ";
+        }
+        s += std::to_string(ids[i]);
+    }
+    return s;
+}
+
 }  // namespace
 
 net::awaitable<void> run(const std::string& token) {
@@ -254,6 +376,7 @@ net::awaitable<void> run(const std::string& token) {
             {"help", "这个机器人能做什么", false},
             {"sticker", "贴纸自动删除：on/off/delay/无参数查状态", false},
             {"welcome", "新成员欢迎：on/off/set <文案>/reset/查状态（群管理员）", false},
+            {"silent", "静默模式：全员禁言 on/off/allow/deny/list（群管理员）", false},
             {"card", "发福利卡片，点按钮领你的专属码（仅你可见）", false},
             {"eph", "给自己发一条仅你可见的消息", false},
             {"myid", "查你的用户 ID（隐身命令，别人看不到）", true},
@@ -283,6 +406,11 @@ net::awaitable<void> run(const std::string& token) {
             "• /welcome set <文案> —— 自定义欢迎词（{name}=对方，{group}=群名）\n"
             "• /welcome —— 查看欢迎语状态\n"
             "\n"
+            "🤐 静默模式（全员禁言，需要我有\"限制成员\"权限）\n"
+            "• /silent on / off —— 只留管理员发言（群管理员）\n"
+            "• /silent allow / deny —— 回复某人放行或收回发言\n"
+            "• /silent —— 查看静默状态和白名单\n"
+            "\n"
             "🎁 群内私密消息（ephemeral，只有你自己能看到）\n"
             "• /card —— 发公开福利卡片，点按钮领取你的专属码\n"
             "• /eph <文字> —— 给自己发一条私密消息\n"
@@ -298,6 +426,8 @@ net::awaitable<void> run(const std::string& token) {
             "（默认 60 秒，/sticker delay <秒> 可改），/sticker 查看状态\n"
             "🙋 新成员欢迎：/welcome on 开启（私密送达，仅本人可见），"
             "/welcome set 定制文案\n"
+            "🤐 静默模式：/silent on 全员禁言（需给我\"限制成员\"权限），"
+            "回复某人 /silent allow 放行\n"
             "🎁 群内私密消息：/card 发福利卡片（点按钮只有本人可见）、"
             "/myid 隐身查 ID\n"
             "私聊我发 /help 看全部功能。需要给我“删除消息”权限才能干活～"};
@@ -502,6 +632,229 @@ net::awaitable<void> run(const std::string& token) {
             bot, msg,
             "用法：/welcome on|off|set <文案>|reset，或 /welcome 查看状态");
     });
+
+    // /silent —— 静默模式（硬禁言：改群默认权限，非管理员输入框直接被禁用）
+    // 无参数/list：查状态（任何人）；on/off/allow/deny：仅群管理员
+    dispatcher.onCommand(
+        "silent", [&state](BotClient& bot,
+                           const json msg) -> net::awaitable<void> {
+            const auto chatId = msg["chat"].value("id", std::int64_t{0});
+            const auto chatType =
+                msg["chat"].value("type", std::string{});
+            if (chatType != "group" && chatType != "supergroup") {
+                co_await replyAndSweep(bot, msg, "这个命令只能在群里用。");
+                co_return;
+            }
+
+            const std::string text = msg.value("text", "");
+            const auto sp = text.find(' ');
+            const std::string arg =
+                sp == std::string::npos ? "" : text.substr(sp + 1);
+            // 二级参数（allow/deny 后面的用户 ID）
+            const auto sp2 = arg.find(' ');
+            const std::string sub =
+                sp2 == std::string::npos ? "" : arg.substr(sp2 + 1);
+
+            // 无参数：状态面板（任何人可用）
+            if (arg.empty()) {
+                const auto ids = state.silentAllowlist(chatId);
+                co_await replyAndSweep(
+                    bot, msg,
+                    std::string{"静默模式：" +
+                                (state.silentEnabled(chatId)
+                                     ? std::string{"已开启 🔇 只有管理员和白名单成员能发言"}
+                                     : std::string{"已关闭"}) +
+                                "\n发言放行：" +
+                                std::to_string(ids.size()) + " 人" +
+                                (ids.empty() ? "" : "（" + joinIds(ids) + "）") +
+                                "\n管理员：/silent on|off|allow|deny"});
+                co_return;
+            }
+
+            if (arg == "list") {
+                const auto ids = state.silentAllowlist(chatId);
+                co_await replyAndSweep(
+                    bot, msg, ids.empty()
+                                  ? "静默白名单为空。"
+                                  : "静默白名单（" + std::to_string(ids.size()) +
+                                        " 人）：" + joinIds(ids));
+                co_return;
+            }
+
+            // 以下变更操作仅群管理员可用
+            const auto userId = msg["from"].value("id", std::int64_t{0});
+            if (!co_await isGroupAdmin(bot, chatId, userId)) {
+                co_await replyAndSweep(bot, msg, "只有群管理员可以修改设置。");
+                co_return;
+            }
+
+            if (arg == "on") {
+                if (state.silentEnabled(chatId)) {
+                    co_await replyAndSweep(bot, msg,
+                                           "静默模式已经是开启状态。");
+                    co_return;
+                }
+                // 1) 快照当前群默认权限（拿不到就不继续，避免无法恢复）
+                std::string snap;
+                std::string failMsg;
+                try {
+                    const auto chat = co_await bot.getChat(chatId);
+                    snap =
+                        chat.value("permissions", json::object()).dump();
+                } catch (const std::exception& e) {
+                    failMsg = e.what();
+                }
+                if (!failMsg.empty()) {
+                    co_await replyAndSweep(
+                        bot, msg,
+                        std::string{"开启失败：读取群权限出错（需要我是群"
+                                    "管理员）："} +
+                            failMsg);
+                    co_return;
+                }
+                // 2) 全员禁言
+                try {
+                    co_await bot.setChatPermissions(chatId, mutedPerms());
+                } catch (const std::exception& e) {
+                    failMsg = e.what();
+                }
+                if (!failMsg.empty()) {
+                    co_await replyAndSweep(
+                        bot, msg,
+                        std::string{"开启失败（需要我有“限制成员”权限）："} +
+                            failMsg);
+                    co_return;
+                }
+                state.setSilentSnapshot(chatId, snap);
+                state.setSilent(chatId, true);
+                // 3) 对白名单成员恢复个人放行（覆盖群默认禁言）
+                for (const auto id : state.silentAllowlist(chatId)) {
+                    try {
+                        co_await bot.restrictChatMember(chatId, id,
+                                                        allowedPerms());
+                    } catch (const std::exception& e) {
+                        spdlog::warn("whitelist re-apply {} in {} failed: {}",
+                                     id, chatId, e.what());
+                    }
+                }
+                co_await replyAndSweep(
+                    bot, msg,
+                    "已开启静默 🔇 现在只有管理员能发言。\n"
+                    "放行指定成员：回复 TA 的消息发 /silent allow；"
+                    "恢复：/silent off");
+                co_return;
+            }
+
+            if (arg == "off") {
+                if (!state.silentEnabled(chatId)) {
+                    co_await replyAndSweep(bot, msg,
+                                           "静默模式当前没有开启。");
+                    co_return;
+                }
+                // 1) 恢复原群默认权限（快照缺失时用兜底默认）
+                json restore = defaultOpenPerms();
+                const auto snap = state.silentSnapshot(chatId);
+                if (snap) {
+                    try {
+                        const auto parsed = json::parse(*snap);
+                        if (parsed.is_object()) {
+                            restore = parsed;
+                        }
+                    } catch (const std::exception&) {
+                        // 快照损坏，用兜底默认
+                    }
+                }
+                std::string failMsg;
+                try {
+                    co_await bot.setChatPermissions(chatId, restore);
+                } catch (const std::exception& e) {
+                    failMsg = e.what();
+                }
+                // 2) 解除白名单成员的个人放行
+                for (const auto id : state.silentAllowlist(chatId)) {
+                    try {
+                        co_await bot.restrictChatMember(chatId, id,
+                                                        defaultOpenPerms());
+                    } catch (const std::exception& e) {
+                        spdlog::warn("unrestrict {} in {} failed: {}", id,
+                                     chatId, e.what());
+                    }
+                }
+                if (!failMsg.empty()) {
+                    co_await replyAndSweep(
+                        bot, msg,
+                        std::string{"恢复原权限失败："} + failMsg +
+                            "\n请管理员手动在群设置里调整权限。");
+                    co_return;
+                }
+                state.setSilent(chatId, false);
+                state.clearSilentSnapshot(chatId);
+                co_await replyAndSweep(
+                    bot, msg, "已关闭静默，群权限已恢复，所有人可正常发言。");
+                co_return;
+            }
+
+            // allow / deny：目标优先取"回复某人"，其次数字用户 ID
+            const bool isAllow =
+                arg == "allow" || arg.rfind("allow ", 0) == 0;
+            const bool isDeny = arg == "deny" || arg.rfind("deny ", 0) == 0;
+            if (isAllow || isDeny) {
+                std::int64_t target = targetFromReply(msg);
+                if (target == 0 && !sub.empty()) {
+                    try {
+                        target = std::stoll(sub);
+                    } catch (const std::exception&) {
+                        target = 0;
+                    }
+                }
+                if (target == 0) {
+                    co_await replyAndSweep(
+                        bot, msg,
+                        "用法：回复某人的消息发 /silent " +
+                            std::string{isAllow ? "allow" : "deny"} +
+                            "，或 /silent " +
+                            std::string{isAllow ? "allow" : "deny"} +
+                            " <用户ID>");
+                    co_return;
+                }
+                std::string failMsg;
+                try {
+                    if (isAllow) {
+                        co_await bot.restrictChatMember(chatId, target,
+                                                        allowedPerms());
+                    } else if (state.silentEnabled(chatId)) {
+                        // 静默中收回：恢复禁言；未静默只需移出名单
+                        co_await bot.restrictChatMember(chatId, target,
+                                                        mutedPerms());
+                    }
+                } catch (const std::exception& e) {
+                    failMsg = e.what();
+                }
+                if (!failMsg.empty()) {
+                    co_await replyAndSweep(
+                        bot, msg,
+                        std::string{"操作失败（需要我有“限制成员”权限）："} +
+                            failMsg);
+                    co_return;
+                }
+                if (isAllow) {
+                    state.addSilentAllow(chatId, target);
+                    co_await replyAndSweep(
+                        bot, msg, "已放行 " + std::to_string(target) +
+                                      "：静默模式下 TA 可以发言。");
+                } else {
+                    state.removeSilentAllow(chatId, target);
+                    co_await replyAndSweep(
+                        bot, msg, "已移除 " + std::to_string(target) +
+                                      " 的发言放行。");
+                }
+                co_return;
+            }
+
+            co_await replyAndSweep(
+                bot, msg,
+                "用法：/silent on|off|allow|deny|list，或 /silent 查看状态");
+        });
 
     // ---- Ephemeral 演示（Bot API 10.2+）：公开入口 + 私人结果 ----
     // 群里发一条所有人可见的卡片；点按钮的人各自收到一条"只有他能看到"的
