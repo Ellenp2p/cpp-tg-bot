@@ -44,6 +44,7 @@
 #include <cstdlib>
 #include <exception>
 #include <iostream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -1131,7 +1132,11 @@ net::awaitable<void> run(const std::string& token) {
         if (const char* p = std::getenv("WEBHOOK_PORT");
             p != nullptr && *p != '\0') {
             try {
-                cfg.port = static_cast<unsigned short>(std::stoi(p));
+                const int v = std::stoi(p);
+                if (v <= 0 || v > 65535) {
+                    throw std::out_of_range("port");
+                }
+                cfg.port = static_cast<unsigned short>(v);
             } catch (const std::exception&) {
                 spdlog::warn("invalid WEBHOOK_PORT '{}', fallback to 8080", p);
             }
