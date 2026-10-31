@@ -44,8 +44,27 @@ boost::asio::awaitable<void> run(const std::string& token) {
 - [x] M5：musl 全静态交付（CI 三平台 release，ldd 全静态，strip 后 8.2 MB）
 - [x] M6：keep-alive 连接池、按聊天 strand 串行派发（同 chat 严格有序、跨 chat 并发）、offset 持久化（`tg_bot.offset`，原子写，重启不丢消息）
 - [x] M7：框架化（`tgbot` 静态库 + `include/tgbot` 公共头 + examples 结构），新增 `deleteMessage` / `getChatMember` / `co_sleep`，附群管理机器人示例
+- [x] M8：webhook 模式（`webhookLoop`，Boost.Beast HTTP/1.1 服务端，TLS 直连或反代两种形态，secret token 校验，与长轮询共用 Dispatcher 和按 chat strand 串行语义）
 
 运行时会生成 `tg_bot.offset`（长轮询确认位点，重启续传用），别删。
+
+### webhook 模式
+
+长轮询与 webhook 二选一，应用层代码完全不变（同一个 `Dispatcher`）：
+
+```cpp
+tgbot::WebhookConfig cfg;
+cfg.publicUrl = "https://bot.example.com/hook";  // 必须 HTTPS（反代形态可用域名）
+cfg.secretToken = "<随机串>";   // 强烈建议：校验 X-Telegram-Bot-Api-Secret-Token
+cfg.port = 8080;
+// cfg.tlsCert / cfg.tlsKey 都设置 → 进程内直接终结 HTTPS（私有化交付）
+// 都不设置 → 明文监听 8080，由 Caddy/nginx 终结 TLS 后反代（需透传 secret 头）
+co_await tgbot::webhookLoop(bot, dispatcher, cfg, &gShuttingDown);
+```
+
+- Telegram 以 HTTP/1.1 POST 投递 update，非 2xx 会自动重试；停机期间回 503 且不再派发，积压由下次启动的 `drop_pending_updates` 清掉（与长轮询"停机即停止"语义一致）
+- 本地自测接收端：`registerOnStart = false`（group_admin 用 `TG_WEBHOOK_SKIP_REGISTER=1`），不碰真实 webhook 配置，直接向本地端口伪造 POST 即可
+- 与 `getUpdates` 互斥；`maxConnections` 默认 40（Telegram 并发投递上限）
 
 ## 踩坑记录（协程必读）
 

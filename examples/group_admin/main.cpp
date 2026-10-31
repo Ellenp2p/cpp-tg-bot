@@ -14,6 +14,17 @@
 // 私聊：/start、/help 查看功能介绍。
 //
 // 用法：./group_admin <bot-token>   或   TG_BOT_TOKEN=... ./group_admin
+//
+// 接收模式（二选一，默认长轮询）：
+// - 长轮询：不加任何环境变量，直接跑（适合本机/无公网）
+// - webhook：设置 TG_WEBHOOK_URL=https://<域名>/<路径>
+//     可选：TG_WEBHOOK_SECRET=<随机串>（强烈建议，校验投递来源）
+//           WEBHOOK_PORT=<端口>（默认 8080）
+//           WEBHOOK_TLS_CERT / WEBHOOK_TLS_KEY=<PEM 路径>（两者都设则进程内
+//           直接 HTTPS；都不设则监听明文端口，需 Caddy/nginx 反代终结 TLS）
+//   反代形态示例：Caddy 反代到 127.0.0.1:8080，且透传
+//   X-Telegram-Bot-Api-Secret-Token 头
+//
 // 注意：机器人需要被设为群管理员（"删除消息"，静默模式还需要"限制成员"），
 //       否则对应功能会失败并在日志中给出具体原因。
 
@@ -1108,8 +1119,47 @@ net::awaitable<void> run(const std::string& token) {
             scheduleDelete(bot, chatId, messageId, delay, executor, "sticker");
         });
 
-    spdlog::info("Long polling started, Ctrl+C to stop");
-    co_await tgbot::longPollLoop(bot, dispatcher, &gShuttingDown);
+    // 模式选择：TG_WEBHOOK_URL 非空 → webhook 模式；否则长轮询
+    const char* webhookUrl = std::getenv("TG_WEBHOOK_URL");
+    if (webhookUrl != nullptr && *webhookUrl != '\0') {
+        tgbot::WebhookConfig cfg;
+        cfg.publicUrl = webhookUrl;
+        if (const char* s = std::getenv("TG_WEBHOOK_SECRET");
+            s != nullptr && *s != '\0') {
+            cfg.secretToken = s;
+        }
+        if (const char* p = std::getenv("WEBHOOK_PORT");
+            p != nullptr && *p != '\0') {
+            try {
+                cfg.port = static_cast<unsigned short>(std::stoi(p));
+            } catch (const std::exception&) {
+                spdlog::warn("invalid WEBHOOK_PORT '{}', fallback to 8080", p);
+            }
+        }
+        if (const char* c = std::getenv("WEBHOOK_TLS_CERT");
+            c != nullptr && *c != '\0') {
+            cfg.tlsCert = c;
+        }
+        if (const char* k = std::getenv("WEBHOOK_TLS_KEY");
+            k != nullptr && *k != '\0') {
+            cfg.tlsKey = k;
+        }
+        // 本地自测接收端用：跳过 setWebhook 注册，直接向本地端口伪造 POST
+        if (const char* skip = std::getenv("TG_WEBHOOK_SKIP_REGISTER");
+            skip != nullptr && *skip != '\0') {
+            cfg.registerOnStart = false;
+        }
+        spdlog::info("Webhook mode: {} (port {}, tls={})", cfg.publicUrl,
+                     cfg.port,
+                     (!cfg.tlsCert.empty() && !cfg.tlsKey.empty()) ? "on"
+                                                                   : "off");
+        // webhook 模式：停机期间 Telegram 重试会收到 503，
+        // 积压由下次启动的 drop_pending_updates 清掉（停机即停止语义）
+        co_await tgbot::webhookLoop(bot, dispatcher, cfg, &gShuttingDown);
+    } else {
+        spdlog::info("Long polling started, Ctrl+C to stop");
+        co_await tgbot::longPollLoop(bot, dispatcher, &gShuttingDown);
+    }
 }
 
 int main(int argc, char** argv) {

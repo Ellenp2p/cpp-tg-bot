@@ -212,6 +212,30 @@ net::awaitable<json> BotClient::setMyCommands(
     co_return co_await apiCall("setMyCommands", {{"commands", arr.dump()}});
 }
 
+net::awaitable<json> BotClient::setWebhook(const std::string& url,
+                                          const std::string& secretToken,
+                                          int maxConnections,
+                                          bool dropPendingUpdates) {
+    std::map<std::string, std::string> params{
+        {"url", url},
+        {"max_connections", std::to_string(maxConnections)}};
+    if (!secretToken.empty()) {
+        params.emplace("secret_token", secretToken);
+    }
+    if (dropPendingUpdates) {
+        params.emplace("drop_pending_updates", "true");
+    }
+    co_return co_await apiCall("setWebhook", std::move(params));
+}
+
+net::awaitable<json> BotClient::deleteWebhook(bool dropPendingUpdates) {
+    std::map<std::string, std::string> params;
+    if (dropPendingUpdates) {
+        params.emplace("drop_pending_updates", "true");
+    }
+    co_return co_await apiCall("deleteWebhook", std::move(params));
+}
+
 net::awaitable<json> BotClient::sendEphemeralMessage(
     std::int64_t chatId, const EphemeralMessageParameters& ephemeral,
     const std::string& text, const json& replyMarkup) {

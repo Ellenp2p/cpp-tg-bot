@@ -33,6 +33,7 @@ add_library(tgbot STATIC
     src/long_poll.cpp
     src/rate_limiter.cpp
     src/sqlite_state_store.cpp
+    src/webhook.cpp
 )
 
 target_include_directories(tgbot PUBLIC
