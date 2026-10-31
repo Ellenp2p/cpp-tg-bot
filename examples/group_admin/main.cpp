@@ -27,6 +27,7 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <csignal>
 #include <cstdlib>
@@ -353,6 +354,10 @@ std::string joinIds(const std::vector<std::int64_t>& ids) {
 }
 
 }  // namespace
+
+// 停机标志：信号到达后置位，长轮询循环立即停止派发新 update，
+// 停机期间的消息一律忽略（配合启动时的积压清空，实现"停机即完全停止"）
+std::atomic<bool> gShuttingDown{false};
 
 net::awaitable<void> run(const std::string& token) {
     BotClient bot(token);
@@ -1104,7 +1109,7 @@ net::awaitable<void> run(const std::string& token) {
         });
 
     spdlog::info("Long polling started, Ctrl+C to stop");
-    co_await tgbot::longPollLoop(bot, dispatcher);
+    co_await tgbot::longPollLoop(bot, dispatcher, &gShuttingDown);
 }
 
 int main(int argc, char** argv) {
@@ -1130,6 +1135,7 @@ int main(int argc, char** argv) {
     signals.async_wait([&io](const boost::system::error_code& ec, int sig) {
         if (!ec) {
             spdlog::info("received signal {}, shutting down...", sig);
+            gShuttingDown.store(true);
             io.stop();
         }
     });

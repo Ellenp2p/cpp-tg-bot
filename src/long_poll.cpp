@@ -10,6 +10,7 @@
 
 #include <spdlog/spdlog.h>
 
+#include <atomic>
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -77,7 +78,8 @@ std::int64_t chatIdOf(const nlohmann::json& update) {
 
 }  // namespace
 
-net::awaitable<void> longPollLoop(BotClient& bot, Dispatcher& dispatcher) {
+net::awaitable<void> longPollLoop(BotClient& bot, Dispatcher& dispatcher,
+                                  const std::atomic<bool>* shuttingDown) {
     const auto executor = co_await net::this_coro::executor;
     std::int64_t offset = loadOffset();
     if (offset > 0) {
@@ -137,6 +139,13 @@ net::awaitable<void> longPollLoop(BotClient& bot, Dispatcher& dispatcher) {
             continue;
         }
         backoff = std::chrono::seconds{1};
+
+        // 停机中：忽略所有新到的 update，不再派发（不推进 offset 文件，
+        // 也不触发任何业务副作用；下次启动的积压清空会把它们丢掉）
+        if (shuttingDown != nullptr && shuttingDown->load()) {
+            spdlog::info("shutting down, ignoring {} update(s)", updates.size());
+            continue;
+        }
 
         for (const auto& update : updates) {
             offset = std::max(offset,
