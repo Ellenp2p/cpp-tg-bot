@@ -117,6 +117,15 @@ public:
     // 发到群里时，其他成员（和其他 bot）完全看不到这条命令消息
     boost::asio::awaitable<nlohmann::json> setMyCommands(
         const std::vector<BotCommand>& commands);
+    // 注册 webhook 投递地址。secretToken 非空时 Telegram 会带
+    // X-Telegram-Bot-Api-Secret-Token 头投递，接收端必须校验。
+    // 与 getUpdates 互斥；dropPendingUpdates=true 清空积压 updates
+    boost::asio::awaitable<nlohmann::json> setWebhook(
+        const std::string& url, const std::string& secretToken = "",
+        int maxConnections = 40, bool dropPendingUpdates = true);
+    // 取消 webhook，恢复可用 getUpdates 的状态
+    boost::asio::awaitable<nlohmann::json> deleteWebhook(
+        bool dropPendingUpdates = true);
 
 private:
     std::string token_;
