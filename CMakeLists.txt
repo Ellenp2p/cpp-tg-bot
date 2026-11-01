@@ -30,12 +30,14 @@ add_library(tgbot STATIC
     src/http_client.cpp
     src/amount.cpp
     src/bot_client.cpp
+    src/chain_health.cpp
     src/dispatcher.cpp
     src/job_queue.cpp
     src/long_poll.cpp
     src/lottery_panel.cpp
     src/panel.cpp
     src/rate_limiter.cpp
+    src/reconciliation.cpp
     src/red_packet_batch.cpp
     src/red_packet_ledger.cpp
     src/red_packet_panel.cpp

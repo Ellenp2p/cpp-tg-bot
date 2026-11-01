@@ -13,6 +13,8 @@
 #include <tgbot/panel.hpp>
 #include <tgbot/rate_limiter.hpp>
 #include <tgbot/amount.hpp>
+#include <tgbot/chain_health.hpp>
+#include <tgbot/reconciliation.hpp>
 #include <tgbot/red_packet_batch.hpp>
 #include <tgbot/red_packet_ledger.hpp>
 #include <tgbot/red_packet_panel.hpp>
@@ -561,14 +563,16 @@ void testBatchRefund() {
     const auto c = ledger->create(-100, 3, 1000, 2, std::chrono::seconds{0});
     CHECK(ledger->grab(a, 10, "@x", 1000));  // a 被抢走一部分
 
-    tgbot::RefundService service(*ledger, tgbot::RefundService::Options{});
+    tgbot::ChainMonitor monitor;
+    tgbot::RefundService service(*ledger, monitor,
+                                 tgbot::RefundService::Options{});
     int calls = 0;
     std::vector<std::int64_t> seen;
     std::size_t flushed = 0;
     tgbot::Amount total;
 
     const tgbot::BatchRefundHandler handler =
-        [&](const tgbot::RefundBatch& batch)
+        [&](const tgbot::RefundBatch& batch, tgbot::TxRefRecorder)
         -> boost::asio::awaitable<tgbot::RefundBatchResult> {
         ++calls;
         total = batch.total();
@@ -616,7 +620,7 @@ void testBatchRefund() {
     const auto d = ledger->create(-100, 4, 2000, 2, std::chrono::seconds{0});
     const auto e = ledger->create(-100, 5, 2000, 2, std::chrono::seconds{0});
     const tgbot::BatchRefundHandler failing =
-        [&](const tgbot::RefundBatch& batch)
+        [&](const tgbot::RefundBatch& batch, tgbot::TxRefRecorder)
         -> boost::asio::awaitable<tgbot::RefundBatchResult> {
         (void)batch;
         tgbot::RefundBatchResult result;
@@ -646,7 +650,83 @@ void testBatchRefund() {
     CHECK(ledger->get(e)->state == "refunded");
 }
 
+void testChainMonitor() {
+    std::printf("test: 熔断器（链/RPC 连续失败 → 暂停）\n");
+
+    tgbot::ChainMonitor monitor;
+    CHECK(!monitor.paused());
+
+    for (int i = 0; i < 4; ++i) {
+        monitor.recordFailure("rpc timeout");
+    }
+    CHECK(!monitor.paused());  // 还没到阈值
+    CHECK(monitor.consecutiveFailures() == 4);
+
+    monitor.recordFailure("rpc timeout");  // 第 5 次触发熔断
+    CHECK(monitor.paused());
+    CHECK(monitor.lastError() == "rpc timeout");
+
+    monitor.recordSuccess();  // 恢复
+    CHECK(!monitor.paused());
+    CHECK(monitor.consecutiveFailures() == 0);
+}
+
+void testReconciler() {
+    std::printf("test: 对账（按 tx hash 回查链上真实状态）\n");
+
+    auto ledger = std::make_shared<tgbot::RedPacketLedger>(":memory:");
+    tgbot::ChainMonitor monitor;
+    tgbot::Reconciler::Options options;
+    options.minAge = std::chrono::seconds{0};
+    options.stuckAfterSeconds = 0;  // 立即视为超时
+    tgbot::Reconciler reconciler(*ledger, monitor, options);
+
+    // a: 链上已成功 → 应该标记 refunded
+    const auto a = ledger->create(-100, 1, 1000, 2, std::chrono::seconds{0});
+    CHECK(ledger->beginRefund(a));
+    CHECK(ledger->setTxRef(a, "0xaaa"));
+
+    // b: 链上失败 → 应该退回 expired 重试
+    const auto b = ledger->create(-100, 2, 1000, 2, std::chrono::seconds{0});
+    CHECK(ledger->beginRefund(b));
+    CHECK(ledger->setTxRef(b, "0xbbb"));
+
+    // c: 没有 tx hash（广播前崩了）→ 应该 stuck
+    const auto c = ledger->create(-100, 3, 1000, 2, std::chrono::seconds{0});
+    CHECK(ledger->beginRefund(c));
+
+    const tgbot::ChainProbe probe =
+        [](std::string_view ref) -> boost::asio::awaitable<tgbot::ChainTxStatus> {
+        if (ref == "0xaaa") {
+            co_return tgbot::ChainTxStatus::kConfirmed;
+        }
+        if (ref == "0xbbb") {
+            co_return tgbot::ChainTxStatus::kFailed;
+        }
+        co_return tgbot::ChainTxStatus::kNotFound;
+    };
+
+    tgbot::ReconciliationReport report;
+    boost::asio::io_context io;
+    boost::asio::co_spawn(
+        io,
+        [&]() -> boost::asio::awaitable<void> {
+            report = co_await reconciler.run(probe, {});
+        },
+        boost::asio::detached);
+    io.run();
+
+    CHECK(report.scanned == 3);
+    CHECK(report.confirmed == 1);
+    CHECK(report.requeued == 1);
+    CHECK(report.stuck == 1);
+    CHECK(ledger->get(a)->state == "refunded");
+    CHECK(ledger->get(b)->state == "expired");
+    CHECK(ledger->get(c)->state == "stuck");
+}
+
 }  // namespace
+
 int main() {
     std::setvbuf(stdout, nullptr, _IONBF, 0);
     testCommandParsing();
@@ -660,6 +740,8 @@ int main() {
     testJobQueue();
     testAmount();
     testBatchRefund();
+    testChainMonitor();
+    testReconciler();
 
     std::printf("\n%d checks, %d failed\n", g_checks, g_failed);
     return g_failed == 0 ? 0 : 1;

@@ -8,6 +8,7 @@
 #include <tgbot/red_packet_ledger.hpp>
 #include <tgbot/red_packet_panel.hpp>
 #include <tgbot/red_packet_service.hpp>
+#include <tgbot/reconciliation.hpp>
 #include <tgbot/rich_text.hpp>
 #include <tgbot/stream_message.hpp>
 #include <tgbot/util.hpp>
@@ -78,25 +79,65 @@ net::awaitable<int> run(const std::string& token) {
     // 红包账本 + 持久化任务队列：重启不丢，没领完的到期批量退款
     auto ledger = std::make_shared<tgbot::RedPacketLedger>("red_packets.db");
     tgbot::JobQueue jobs("jobs.db");
-    tgbot::RefundService refunds(*ledger, tgbot::RefundService::Options{});
+    tgbot::ChainMonitor chain;  // 连续失败就熔断，暂停自动退款
+
+    const tgbot::AlertSink alert =
+        [](std::string_view level, std::string_view message)
+        -> net::awaitable<void> {
+        // 生产环境这里改成给管理员发消息（例如固定 chat_id 的 sendMessage）
+        spdlog::error("[告警/{}] {}", level, message);
+        co_return;
+    };
+
+    tgbot::RefundService refunds(*ledger, chain,
+                                 tgbot::RefundService::Options{}, alert);
+    tgbot::Reconciler reconciler(*ledger, chain, tgbot::Reconciler::Options{});
 
     const tgbot::BatchRefundHandler refund =
-        [](const tgbot::RefundBatch& batch) -> net::awaitable<tgbot::RefundBatchResult> {
-        // 一次调用处理一整批：链上就是一次批量转账（multisend / 合约 payout），
-        // 比逐笔发交易省 gas。抛异常 = 整批失败，任务队列会退避重试。
+        [](const tgbot::RefundBatch& batch,
+           tgbot::TxRefRecorder recordRef) -> net::awaitable<tgbot::RefundBatchResult> {
+        // 一次调用处理一整批：链上就是一次批量转账，省 gas。
+        // 拿到 tx hash 的第一时间就落库，否则崩溃后没法对账。
+        const auto txHash = "local-batch:" + batch.id;
+        recordRef(txHash);
         for (const auto& item : batch.items) {
             spdlog::info("退款：红包 {} → 用户 {}，金额 {} wei", item.packetId,
                          item.creatorId, item.amount.toString());
         }
         tgbot::RefundBatchResult result;
-        result.ref = "local-batch:" + batch.id;  // 接链上时换成 tx hash
+        result.ref = txHash;
         co_return result;
     };
+
     net::co_spawn(co_await net::this_coro::executor,
                   jobs.runWorker([&refunds, refund](const tgbot::JobRecord& job)
                                      -> net::awaitable<void> {
                       co_await refunds.handleJob(job, refund);
                   }),
+                  net::detached);
+
+    // 对账：补上"广播成功但进程崩了"的窗口。没有真实链时 probe 一律 not_found
+    const tgbot::ChainProbe probe =
+        [](std::string_view txRef) -> net::awaitable<tgbot::ChainTxStatus> {
+        spdlog::debug("对账探测: {}", txRef);
+        co_return tgbot::ChainTxStatus::kNotFound;
+    };
+    net::co_spawn(co_await net::this_coro::executor,
+                  [&reconciler, probe, alert]() -> net::awaitable<void> {
+                      while (true) {
+                          co_await tgbot::co_sleep(std::chrono::seconds{60});
+                          const auto report =
+                              co_await reconciler.run(probe, alert);
+                          if (report.scanned > 0) {
+                              spdlog::info(
+                                  "对账：扫描 {} 笔，确认 {}，重排 {}，stuck {}，"
+                                  "待确认 {}",
+                                  report.scanned, report.confirmed,
+                                  report.requeued, report.stuck,
+                                  report.stillPending);
+                          }
+                      }
+                  },
                   net::detached);
 
     dispatcher.onCommand("start", [](tgbot::BotClient& bot,
