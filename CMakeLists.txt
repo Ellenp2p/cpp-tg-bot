@@ -62,7 +62,7 @@ target_link_libraries(tgbot PUBLIC
 # /bigobj：webhook.cpp 的模板协程在 Debug(/Od) 下会触发 C1128（对象节数超限），
 # Release 不触发，但没人想"只有 Debug 编不过"
 if(MSVC)
-    target_compile_options(tgbot PUBLIC /utf-8 /bigobj)
+    target_compile_options(tgbot PUBLIC /utf-8 /bigobj /permissive-)
 endif()
 
 # ---- CA 证书包 ----

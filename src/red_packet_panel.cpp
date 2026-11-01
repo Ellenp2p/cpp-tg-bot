@@ -24,6 +24,10 @@ std::string formatMoney(std::int64_t cents) {
 }  // namespace
 
 RedPacketPanel::RedPacketPanel(std::shared_ptr<RedPacketLedger> ledger,
+                               std::int64_t packetId)
+    : RedPacketPanel(std::move(ledger), packetId, Options{}) {}
+
+RedPacketPanel::RedPacketPanel(std::shared_ptr<RedPacketLedger> ledger,
                                std::int64_t packetId, Options options)
     : ledger_(std::move(ledger)),
       packetId_(packetId),
