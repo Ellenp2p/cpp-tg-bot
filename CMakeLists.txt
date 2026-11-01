@@ -101,6 +101,15 @@ if(TGBOT_STATIC AND UNIX AND NOT APPLE)
     target_link_options(tgbot PUBLIC -static -static-libgcc -static-libstdc++)
 endif()
 
+# ---- 单元测试 ----
+option(TGBOT_BUILD_TESTS "Build unit tests" ON)
+if(TGBOT_BUILD_TESTS)
+    enable_testing()
+    add_executable(tgbot_tests tests/tests.cpp)
+    target_link_libraries(tgbot_tests PRIVATE tgbot)
+    add_test(NAME tgbot_tests COMMAND tgbot_tests)
+endif()
+
 # ---- 示例机器人 ----
 option(TGBOT_BUILD_EXAMPLES "Build example bots" ON)
 if(TGBOT_BUILD_EXAMPLES)
