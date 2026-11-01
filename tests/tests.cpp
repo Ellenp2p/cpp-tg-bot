@@ -8,6 +8,8 @@
 
 #include <tgbot/bot_client.hpp>
 #include <tgbot/dispatcher.hpp>
+#include <tgbot/lottery_panel.hpp>
+#include <tgbot/panel.hpp>
 #include <tgbot/rate_limiter.hpp>
 
 #include <boost/asio/co_spawn.hpp>
@@ -273,6 +275,81 @@ void testRichText() {
 }
 
 
+void testLotteryPanel() {
+    std::printf("test: lottery panel state machine\n");
+
+    tgbot::LotteryPanel::Config cfg;
+    cfg.creatorId = 1;
+    cfg.winnerCount = 1;
+    cfg.duration = std::chrono::seconds{60};
+    tgbot::LotteryPanel panel(cfg);
+
+    tgbot::PanelEvent join;
+    join.action = "join";
+    join.userId = 10;
+    join.userName = "@alice";
+
+    tgbot::PanelEffects fx;
+    CHECK(panel.onClick(join, fx));            // 首次参与 → 需要刷新
+    CHECK(panel.participantCount() == 1);
+    CHECK(!fx.answer.empty());
+
+    fx = {};
+    CHECK(!panel.onClick(join, fx));           // 重复参与 → 不刷新
+    CHECK(panel.participantCount() == 1);
+
+    auto join2 = join;
+    join2.userId = 11;
+    join2.userName = "@bob";
+    fx = {};
+    CHECK(panel.onClick(join2, fx));
+    CHECK(panel.participantCount() == 2);
+
+    // 非发起者不能开奖
+    auto drawByOther = join;
+    drawByOther.action = "draw";
+    fx = {};
+    CHECK(!panel.onClick(drawByOther, fx));
+    CHECK(fx.showAlert);
+    CHECK(panel.winners().empty());
+
+    // 发起者开奖 → 产生私密消息
+    auto draw = drawByOther;
+    draw.userId = 1;
+    fx = {};
+    CHECK(panel.onClick(draw, fx));
+    CHECK(panel.closed());
+    CHECK(panel.winners().size() == 1);
+    CHECK(fx.privateMessages.size() == 1);
+    CHECK(fx.privateMessages[0].userId == panel.winners()[0]);
+    CHECK(!fx.privateMessages[0].text.empty());
+
+    // 开奖后不能参与
+    auto late = join;
+    late.userId = 12;
+    fx = {};
+    CHECK(!panel.onClick(late, fx));
+    CHECK(panel.participantCount() == 2);
+
+    // 结束后渲染：显示已开奖、且不再有按钮
+    const auto view = panel.render();
+    CHECK(view.text.find("已开奖") != std::string::npos);
+    CHECK(view.keyboard.is_null());
+
+    // 倒计时到点自动开奖（只有 1 人参与，中奖数取 min）
+    tgbot::LotteryPanel::Config autoCfg;
+    autoCfg.duration = std::chrono::seconds{0};
+    autoCfg.winnerCount = 3;
+    tgbot::LotteryPanel autoPanel(autoCfg);
+    tgbot::PanelEffects autoFx;
+    CHECK(autoPanel.onClick(join, autoFx));
+    autoFx = {};
+    autoPanel.onDeadline(autoFx);
+    CHECK(autoPanel.closed());
+    CHECK(autoPanel.winners().size() == 1);
+    CHECK(autoFx.privateMessages.size() == 1);
+}
+
 }  // namespace
 
 int main() {
@@ -281,6 +358,7 @@ int main() {
     testRateLimiterSpacing();
     testPermanentErrorClassifier();
     testRichText();
+    testLotteryPanel();
 
     std::printf("\n%d checks, %d failed\n", g_checks, g_failed);
     return g_failed == 0 ? 0 : 1;

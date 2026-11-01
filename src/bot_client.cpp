@@ -214,6 +214,9 @@ net::awaitable<json> BotClient::sendMessage(std::int64_t chatId,
     if (options.disableWebPagePreview) {
         params.emplace("link_preview_options", R"({"is_disabled":true})");
     }
+    if (!options.replyMarkup.is_null()) {
+        params.emplace("reply_markup", options.replyMarkup.dump());
+    }
     co_return co_await apiCall("sendMessage", std::move(params),
                                RetryPolicy::kNoTransportRetry);
 }
@@ -255,16 +258,23 @@ net::awaitable<json> BotClient::editMessageText(std::int64_t chatId,
     if (options.disableWebPagePreview) {
         params.emplace("link_preview_options", R"({"is_disabled":true})");
     }
+    if (!options.replyMarkup.is_null()) {
+        params.emplace("reply_markup", options.replyMarkup.dump());
+    }
     co_return co_await apiCall("editMessageText", std::move(params),
                                RetryPolicy::kNoTransportRetry);
 }
 
 net::awaitable<void> BotClient::answerCallbackQuery(
-    const std::string& callbackQueryId, const std::string& text) {
+    const std::string& callbackQueryId, const std::string& text,
+    bool showAlert) {
     std::map<std::string, std::string> params{
         {"callback_query_id", callbackQueryId}};
     if (!text.empty()) {
         params.emplace("text", text);
+    }
+    if (showAlert) {
+        params.emplace("show_alert", "true");
     }
     co_await apiCall("answerCallbackQuery", std::move(params),
                      RetryPolicy::kNoTransportRetry);
