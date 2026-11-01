@@ -64,19 +64,25 @@ BotClient::~BotClient() {
 
 net::awaitable<json> BotClient::apiCall(
     const std::string& method, std::map<std::string, std::string> params,
-    RetryPolicy policy) {
-    std::string target = "/bot" + token_ + "/" + method;
-    if (!params.empty()) {
-        target += '?';
-        bool first = true;
-        for (const auto& [key, value] : params) {
-            if (!first) target += '&';
-            first = false;
-            target += urlEncode(key);
-            target += '=';
-            target += urlEncode(value);
+    RetryPolicy policy, std::chrono::seconds ioTimeout) {
+    // 参数走 POST 表单 body：URL 里只剩 token + 方法名。
+    // 用 GET 拼 query 时，4096 字的 text 百分号编码后能膨胀到 ~12KB，
+    // 撞上服务端 URL 长度上限就是一发 414。
+    std::string body;
+    for (const auto& [key, value] : params) {
+        if (!body.empty()) {
+            body += '&';
         }
+        body += urlEncode(key);
+        body += '=';
+        body += urlEncode(value);
     }
+
+    HttpRequest request;
+    request.method = HttpMethod::kPost;
+    request.target = "/bot" + token_ + "/" + method;
+    request.body = std::move(body);
+    request.readTimeout = ioTimeout;
 
     constexpr int kMaxRetries = 3;
     for (int attempt = 1;; ++attempt) {
@@ -84,7 +90,8 @@ net::awaitable<json> BotClient::apiCall(
         std::string transportError;  // 非空 = 传输层失败（请求可能已送达）
 
         try {
-            const auto resp = co_await httpsGet("api.telegram.org", target);
+            const auto resp =
+                co_await httpsRequest("api.telegram.org", request);
             if (resp.status == 200) {
                 json j;
                 try {
@@ -178,7 +185,10 @@ net::awaitable<json> BotClient::getUpdates(std::int64_t offset, int timeout,
          // 必须显式指定：官方文档说明不传 allowed_updates 会沿用
          // 服务器上一次的设置，残留配置可能把 callback_query 过滤掉，
          // 表现为"按钮点了毫无反应"
-         {"allowed_updates", std::move(allowedUpdates)}});
+         {"allowed_updates", std::move(allowedUpdates)}},
+        // 长轮询问到的"读超时"必须比 Telegram 那边的 timeout 更长，
+        // 否则正常的 30 秒静默等待会被自己的超时打断
+        RetryPolicy::kDefault, std::chrono::seconds{timeout + 15});
 }
 
 // 以下写操作一律 kNoTransportRetry：传输错误时消息可能已经发出去了，

@@ -6,6 +6,7 @@
 #include <nlohmann/json.hpp>
 
 #include <cstdint>
+#include <chrono>
 #include <map>
 #include <optional>
 #include <stdexcept>
@@ -72,14 +73,17 @@ public:
     BotClient(const BotClient&) = delete;
     BotClient& operator=(const BotClient&) = delete;
 
-    // 统一入口：method 为 API 方法名，params 作 URL 编码拼到 query。
+    // 统一入口：method 为 API 方法名，params 以表单编码放在 POST body 里
+    // （不再拼 query，长文本/大键盘不会撞 URL 长度上限）。
     // 返回 "result" 字段。ok=false / 不可重试的 HTTP 错误抛 TelegramApiError，
     // 429 与 5xx 自动指数退避重试（最多 3 次）；401/403/404 永久错误不重试。
     // policy 见 RetryPolicy：写操作（sendMessage 等）传 kNoTransportRetry。
+    // ioTimeout 是读响应的超时，长轮询必须传比 Telegram 那边更长的时间。
     boost::asio::awaitable<nlohmann::json> apiCall(
         const std::string& method,
         std::map<std::string, std::string> params = {},
-        RetryPolicy policy = RetryPolicy::kDefault);
+        RetryPolicy policy = RetryPolicy::kDefault,
+        std::chrono::seconds ioTimeout = std::chrono::seconds{30});
 
     boost::asio::awaitable<nlohmann::json> getMe();
     // 长轮询：阻塞至多 timeout 秒，返回 updates 数组（超时为空数组）。
