@@ -2,15 +2,39 @@
 
 #include <spdlog/spdlog.h>
 
+#include <cctype>
 #include <exception>
+#include <string_view>
 #include <utility>
 
 namespace tgbot {
 
 using nlohmann::json;
 
+namespace {
+
+// Telegram 的 username 大小写不敏感
+bool iequals(std::string_view a, std::string_view b) {
+    if (a.size() != b.size()) {
+        return false;
+    }
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        const auto ca = static_cast<unsigned char>(a[i]);
+        const auto cb = static_cast<unsigned char>(b[i]);
+        if (std::tolower(ca) != std::tolower(cb)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+}  // namespace
+
 void Dispatcher::onCommand(std::string command, MessageHandler handler) {
-    commands_.emplace(std::move(command), std::move(handler));
+    const std::string name = command;
+    if (!commands_.emplace(std::move(command), std::move(handler)).second) {
+        spdlog::warn("onCommand: /{} 重复注册，后注册的处理器被忽略", name);
+    }
 }
 
 void Dispatcher::onAnyMessage(MessageHandler handler) {
@@ -20,6 +44,13 @@ void Dispatcher::onAnyMessage(MessageHandler handler) {
 void Dispatcher::onCallbackQuery(std::string dataPrefix,
                                  MessageHandler handler) {
     callbackQueries_.emplace(std::move(dataPrefix), std::move(handler));
+}
+
+void Dispatcher::setBotUsername(std::string username) {
+    if (!username.empty() && username.front() == '@') {
+        username.erase(username.begin());
+    }
+    botUsername_ = std::move(username);
 }
 
 boost::asio::awaitable<void> Dispatcher::dispatch(json update, BotClient& bot) {
@@ -69,6 +100,12 @@ boost::asio::awaitable<void> Dispatcher::dispatch(json update, BotClient& bot) {
             suffix = command.substr(at);  // 含 '@'
             command.erase(at);
             suffixAt = at;
+            // 群里可能有多个 bot："/x@OtherBot" 不是给我们的，直接忽略，
+            // 否则每个 bot 都会抢答一遍
+            if (!botUsername_.empty() &&
+                !iequals(std::string_view{suffix}.substr(1), botUsername_)) {
+                co_return;
+            }
         }
         if (const auto it = commands_.find(command); it != commands_.end()) {
             if (suffixAt != std::string::npos) {

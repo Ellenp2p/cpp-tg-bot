@@ -10,8 +10,11 @@ namespace tgbot {
 
 // 发送限速器：全局约 30 msg/s（Telegram 限制），单聊天 1 msg/s。
 //
-// 实现为"最小发送间隔"调度：每个协程发送前 co_await 到属于自己的时间槽，
-// 由于所有协程跑在单个 io_context 线程上，无需加锁。
+// 注意 Telegram 对**群**的额外限制是 20 msg/min，比 1 msg/s 更严格；
+// 高频场景需要按 chat 类型再收紧（目前框架不知道 chat 类型，故未实现）。
+//
+// 实现为"最小发送间隔"调度：每个协程发送前先占住自己的时间槽、再等到该
+// 时刻，由于所有协程跑在单个 io_context 线程上，无需加锁。
 // 前提：BotClient 只能在同一个 io_context 的单线程里使用。
 class RateLimiter {
 public:

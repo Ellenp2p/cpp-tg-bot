@@ -21,6 +21,22 @@ struct TelegramApiError : std::runtime_error {
     TelegramApiError(long code, const std::string& description);
 };
 
+// 永久性错误（token 无效 / 无权限 / 方法不存在）：重试没有意义，应直接失败
+inline bool isPermanentError(long errorCode) {
+    return errorCode == 401 || errorCode == 403 || errorCode == 404;
+}
+
+// 默认订阅的 update 类型。需要 edited_message / chat_member / inline_query
+// 等类型时要显式传别的值（Bot API 规定不传会沿用上一次的设置）
+inline constexpr char kDefaultAllowedUpdates[] = R"(["message","callback_query"])";
+
+// 重试策略：
+// - kDefault：429 / 5xx / 传输错误都重试（只读方法用，重试无副作用）
+// - kNoTransportRetry：只重试 429（被限速，请求肯定没执行）。传输错误时
+//   请求可能已被服务端处理、只是响应丢了，重试会造成重复消息/重复操作，
+//   所以直接失败让业务决定
+enum class RetryPolicy { kDefault, kNoTransportRetry };
+
 // Ephemeral Message 参数（Bot API 10.2+）：发送"群里只有指定用户可见"的消息。
 // 两种合法用法：
 // - 被动回复（所有 bot）：触发动作后 15 秒窗口内提供 callbackQueryId
@@ -49,18 +65,28 @@ struct BotCommand {
 class BotClient {
 public:
     explicit BotClient(std::string token);
+    // 析构时清空全局 HTTPS 空闲连接池：连接对象不得比 io_context 活得久
+    ~BotClient();
+
+    // 不要把 BotClient 当值对象拷贝：它会连带复制限速器状态，等于绕过限速
+    BotClient(const BotClient&) = delete;
+    BotClient& operator=(const BotClient&) = delete;
 
     // 统一入口：method 为 API 方法名，params 作 URL 编码拼到 query。
     // 返回 "result" 字段。ok=false / 不可重试的 HTTP 错误抛 TelegramApiError，
-    // 429 与 5xx 自动指数退避重试（最多 3 次）。
+    // 429 与 5xx 自动指数退避重试（最多 3 次）；401/403/404 永久错误不重试。
+    // policy 见 RetryPolicy：写操作（sendMessage 等）传 kNoTransportRetry。
     boost::asio::awaitable<nlohmann::json> apiCall(
         const std::string& method,
-        std::map<std::string, std::string> params = {});
+        std::map<std::string, std::string> params = {},
+        RetryPolicy policy = RetryPolicy::kDefault);
 
     boost::asio::awaitable<nlohmann::json> getMe();
-    // 长轮询：阻塞至多 timeout 秒，返回 updates 数组（超时为空数组）
-    boost::asio::awaitable<nlohmann::json> getUpdates(std::int64_t offset,
-                                                      int timeout = 30);
+    // 长轮询：阻塞至多 timeout 秒，返回 updates 数组（超时为空数组）。
+    // allowedUpdates 是 JSON 数组字符串，需与框架实际处理的消息类型一致
+    boost::asio::awaitable<nlohmann::json> getUpdates(
+        std::int64_t offset, int timeout = 30,
+        std::string allowedUpdates = kDefaultAllowedUpdates);
     boost::asio::awaitable<nlohmann::json> sendMessage(
         std::int64_t chatId, const std::string& text);
     // 带 inline 键盘的版本，replyMarkup 形如

@@ -55,8 +55,16 @@ json ephemeralToJson(const EphemeralMessageParameters& p) {
 
 BotClient::BotClient(std::string token) : token_(std::move(token)) {}
 
+BotClient::~BotClient() {
+    // 空闲连接池是进程级静态对象，必须在 io_context 销毁前清空：
+    // Asio 要求 I/O 对象不得比它所属的 io_context 活得久，否则退出时
+    // 会在已析构的 io_context 上 close() 套接字（UB）。
+    clearIdlePool();
+}
+
 net::awaitable<json> BotClient::apiCall(
-    const std::string& method, std::map<std::string, std::string> params) {
+    const std::string& method, std::map<std::string, std::string> params,
+    RetryPolicy policy) {
     std::string target = "/bot" + token_ + "/" + method;
     if (!params.empty()) {
         target += '?';
@@ -73,13 +81,25 @@ net::awaitable<json> BotClient::apiCall(
     constexpr int kMaxRetries = 3;
     for (int attempt = 1;; ++attempt) {
         long retryAfterSec = 0;
+        std::string transportError;  // 非空 = 传输层失败（请求可能已送达）
+
         try {
             const auto resp = co_await httpsGet("api.telegram.org", target);
             if (resp.status == 200) {
-                const auto j = json::parse(resp.body);
-                if (!j.is_object() || !j.value("ok", false)) { spdlog::error("apiCall {} status={} body: {}", method, resp.status, resp.body); }
-                if (j.value("ok", false)) {
+                json j;
+                try {
+                    j = json::parse(resp.body);
+                } catch (const json::exception& e) {
+                    throw TelegramApiError(resp.status, method +
+                                                            ": 响应不是合法 JSON: " +
+                                                            e.what());
+                }
+                if (j.is_object() && j.value("ok", false)) {
                     co_return j["result"];
+                }
+                if (!j.is_object()) {
+                    throw TelegramApiError(resp.status,
+                                           method + ": 响应不是 JSON 对象");
                 }
                 throw TelegramApiError(j.value("error_code", 0L),
                                        method + ": " +
@@ -110,15 +130,30 @@ net::awaitable<json> BotClient::apiCall(
                     // 响应体不是 JSON，忽略
                 }
             }
+            // 永久错误（错 token / 无权限 / 方法不存在）重试也没用，
+            // 直接上抛让调用方退出，别陷入"每 30 秒打一条错误日志"的死循环
+            if (isPermanentError(apiCode) || isPermanentError(resp.status)) {
+                throw TelegramApiError(apiCode, method + ": " + apiDesc);
+            }
             const bool retryable = (resp.status == 429 || resp.status >= 500);
             if (!retryable || attempt > kMaxRetries) {
                 throw TelegramApiError(apiCode, method + ": " + apiDesc);
             }
         } catch (const boost::system::system_error& e) {
+            // 传输层失败：请求可能已经到达服务端，只是响应丢了
+            transportError = e.what();
             if (attempt > kMaxRetries) {
-                throw std::runtime_error(method +
-                                         ": network error: " + e.what());
+                throw std::runtime_error(method + ": network error: " +
+                                         transportError);
             }
+        }
+
+        if (!transportError.empty() &&
+            policy == RetryPolicy::kNoTransportRetry) {
+            throw std::runtime_error(
+                method +
+                ": network error（结果未知，按策略不重试以免重复操作）: " +
+                transportError);
         }
 
         auto delay = std::chrono::seconds{1 << (attempt - 1)};
@@ -134,7 +169,8 @@ net::awaitable<json> BotClient::apiCall(
 
 net::awaitable<json> BotClient::getMe() { co_return co_await apiCall("getMe"); }
 
-net::awaitable<json> BotClient::getUpdates(std::int64_t offset, int timeout) {
+net::awaitable<json> BotClient::getUpdates(std::int64_t offset, int timeout,
+                                           std::string allowedUpdates) {
     co_return co_await apiCall(
         "getUpdates",
         {{"offset", std::to_string(offset)},
@@ -142,14 +178,18 @@ net::awaitable<json> BotClient::getUpdates(std::int64_t offset, int timeout) {
          // 必须显式指定：官方文档说明不传 allowed_updates 会沿用
          // 服务器上一次的设置，残留配置可能把 callback_query 过滤掉，
          // 表现为"按钮点了毫无反应"
-         {"allowed_updates", R"(["message","callback_query"])"}});
+         {"allowed_updates", std::move(allowedUpdates)}});
 }
+
+// 以下写操作一律 kNoTransportRetry：传输错误时消息可能已经发出去了，
+// 重试会在群里留下重复消息（删除类操作则会变成 400 "message not found"）。
 
 net::awaitable<json> BotClient::sendMessage(std::int64_t chatId,
                                             const std::string& text) {
     co_await limiter_.beforeSend(chatId);
     co_return co_await apiCall(
-        "sendMessage", {{"chat_id", std::to_string(chatId)}, {"text", text}});
+        "sendMessage", {{"chat_id", std::to_string(chatId)}, {"text", text}},
+        RetryPolicy::kNoTransportRetry);
 }
 
 net::awaitable<json> BotClient::sendMessage(std::int64_t chatId,
@@ -159,7 +199,8 @@ net::awaitable<json> BotClient::sendMessage(std::int64_t chatId,
     co_return co_await apiCall("sendMessage",
                                {{"chat_id", std::to_string(chatId)},
                                 {"text", text},
-                                {"reply_markup", replyMarkup.dump()}});
+                                {"reply_markup", replyMarkup.dump()}},
+                               RetryPolicy::kNoTransportRetry);
 }
 
 net::awaitable<json> BotClient::editMessageText(std::int64_t chatId,
@@ -169,7 +210,8 @@ net::awaitable<json> BotClient::editMessageText(std::int64_t chatId,
     co_return co_await apiCall("editMessageText",
                                {{"chat_id", std::to_string(chatId)},
                                 {"message_id", std::to_string(messageId)},
-                                {"text", text}});
+                                {"text", text}},
+                               RetryPolicy::kNoTransportRetry);
 }
 
 net::awaitable<void> BotClient::answerCallbackQuery(
@@ -179,7 +221,8 @@ net::awaitable<void> BotClient::answerCallbackQuery(
     if (!text.empty()) {
         params.emplace("text", text);
     }
-    co_await apiCall("answerCallbackQuery", std::move(params));
+    co_await apiCall("answerCallbackQuery", std::move(params),
+                     RetryPolicy::kNoTransportRetry);
 }
 
 
@@ -188,7 +231,8 @@ net::awaitable<json> BotClient::deleteMessage(std::int64_t chatId,
     co_await limiter_.beforeSend(chatId);
     co_return co_await apiCall("deleteMessage",
                                {{"chat_id", std::to_string(chatId)},
-                                {"message_id", std::to_string(messageId)}});
+                                {"message_id", std::to_string(messageId)}},
+                               RetryPolicy::kNoTransportRetry);
 }
 
 net::awaitable<json> BotClient::getChatMember(std::int64_t chatId,
@@ -209,7 +253,8 @@ net::awaitable<json> BotClient::setMyCommands(
         }
         arr.push_back(std::move(item));
     }
-    co_return co_await apiCall("setMyCommands", {{"commands", arr.dump()}});
+    co_return co_await apiCall("setMyCommands", {{"commands", arr.dump()}},
+                               RetryPolicy::kNoTransportRetry);
 }
 
 net::awaitable<json> BotClient::setWebhook(const std::string& url,
@@ -225,7 +270,8 @@ net::awaitable<json> BotClient::setWebhook(const std::string& url,
     if (dropPendingUpdates) {
         params.emplace("drop_pending_updates", "true");
     }
-    co_return co_await apiCall("setWebhook", std::move(params));
+    co_return co_await apiCall("setWebhook", std::move(params),
+                               RetryPolicy::kNoTransportRetry);
 }
 
 net::awaitable<json> BotClient::deleteWebhook(bool dropPendingUpdates) {
@@ -233,7 +279,8 @@ net::awaitable<json> BotClient::deleteWebhook(bool dropPendingUpdates) {
     if (dropPendingUpdates) {
         params.emplace("drop_pending_updates", "true");
     }
-    co_return co_await apiCall("deleteWebhook", std::move(params));
+    co_return co_await apiCall("deleteWebhook", std::move(params),
+                               RetryPolicy::kNoTransportRetry);
 }
 
 net::awaitable<json> BotClient::sendEphemeralMessage(
@@ -247,7 +294,8 @@ net::awaitable<json> BotClient::sendEphemeralMessage(
     if (!replyMarkup.is_null()) {
         params.emplace("reply_markup", replyMarkup.dump());
     }
-    co_return co_await apiCall("sendMessage", std::move(params));
+    co_return co_await apiCall("sendMessage", std::move(params),
+                               RetryPolicy::kNoTransportRetry);
 }
 
 net::awaitable<json> BotClient::editEphemeralMessageText(
@@ -263,7 +311,8 @@ net::awaitable<json> BotClient::editEphemeralMessageText(
     if (!replyMarkup.is_null()) {
         params.emplace("reply_markup", replyMarkup.dump());
     }
-    co_return co_await apiCall("editEphemeralMessageText", std::move(params));
+    co_return co_await apiCall("editEphemeralMessageText", std::move(params),
+                               RetryPolicy::kNoTransportRetry);
 }
 
 net::awaitable<json> BotClient::editEphemeralMessageReplyMarkup(
@@ -278,7 +327,8 @@ net::awaitable<json> BotClient::editEphemeralMessageReplyMarkup(
         params.emplace("reply_markup", replyMarkup.dump());
     }
     co_return co_await apiCall("editEphemeralMessageReplyMarkup",
-                               std::move(params));
+                               std::move(params),
+                               RetryPolicy::kNoTransportRetry);
 }
 
 net::awaitable<json> BotClient::deleteEphemeralMessage(
@@ -289,7 +339,8 @@ net::awaitable<json> BotClient::deleteEphemeralMessage(
         "deleteEphemeralMessage",
         {{"chat_id", std::to_string(chatId)},
          {"receiver_user_id", std::to_string(receiverUserId)},
-         {"ephemeral_message_id", std::to_string(ephemeralMessageId)}});
+         {"ephemeral_message_id", std::to_string(ephemeralMessageId)}},
+        RetryPolicy::kNoTransportRetry);
 }
 
 net::awaitable<json> BotClient::getChat(std::int64_t chatId) {
@@ -303,7 +354,8 @@ net::awaitable<json> BotClient::setChatPermissions(
     co_return co_await apiCall(
         "setChatPermissions",
         {{"chat_id", std::to_string(chatId)},
-         {"permissions", permissions.dump()}});
+         {"permissions", permissions.dump()}},
+        RetryPolicy::kNoTransportRetry);
 }
 
 net::awaitable<json> BotClient::restrictChatMember(
@@ -317,7 +369,8 @@ net::awaitable<json> BotClient::restrictChatMember(
     if (untilDate > 0) {
         params.emplace("until_date", std::to_string(untilDate));
     }
-    co_return co_await apiCall("restrictChatMember", std::move(params));
+    co_return co_await apiCall("restrictChatMember", std::move(params),
+                               RetryPolicy::kNoTransportRetry);
 }
 
 }  // namespace tgbot
