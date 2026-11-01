@@ -4,7 +4,23 @@ vcpkg-bincache/
 vcpkg_installed/
 out/
 dist/
+dist2/
 framework/
+
+# setup.bat 在仓库根目录留下的临时文件
+bincache.tar.gz
+vcpkg-commit.txt
+
+# 运行时状态（offset / SQLite），属于部署数据，不进版本库
+tg_bot.offset
+tg_bot.offset.tmp
 *.db
 *.db-wal
 *.db-shm
+
+# 构建产物 / IDE
+*.exe
+cmake-build-*/
+.vs/
+CMakeLists.txt.user
+.DS_Store

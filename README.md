@@ -7,10 +7,11 @@ musl 全静态交付。业务机器人作为框架之上的薄壳编写，见 `e
 ## 框架结构
 
 ```
-include/tgbot/     公共头文件（框架 API，#include <tgbot/tg_bot.hpp> 全量引入）
+include/tgbot/     公共头文件（框架 API，#include <tgbot/tg_bot.hpp> 全量引入；
+                   SQLite 后端是可选组件，单独 #include <tgbot/sqlite_state_store.hpp>）
 src/               框架实现（编译为静态库 tgbot）
 examples/
-  echo/            演示机器人：回声 / /start / inline 键盘
+  echo_bot/        演示机器人：回声 / /start / inline 键盘
   group_admin/     群管理机器人：贴纸 60 秒自动过期，/sticker on|off 群管理员控制
 ```
 
@@ -41,12 +42,41 @@ boost::asio::awaitable<void> run(const std::string& token) {
 - [x] M2：Bot API 封装（`apiCall` 统一入口 / 429+5xx 退避重试 / `TelegramApiError`）
 - [x] M3：长轮询 + 每 update 协程派发（echobot，`/start` + 回声）
 - [x] M4：指数退避重连、429 retry_after 限速、inline 键盘/回调、Ctrl+C 优雅退出
-- [x] M5：musl 全静态交付（CI 三平台 release，ldd 全静态，strip 后 8.2 MB）
-- [x] M6：keep-alive 连接池、按聊天 strand 串行派发（同 chat 严格有序、跨 chat 并发）、offset 持久化（`tg_bot.offset`，原子写，重启不丢消息）
+- [x] M5：musl 全静态交付（CI 三平台 release，`readelf` 确认无 INTERP 段，strip 后 8.2 MB）
+- [x] M6：keep-alive 连接池、按聊天 strand 串行派发（同 chat 严格有序、跨 chat 并发）、offset 持久化（`tg_bot.offset`，原子写）
 - [x] M7：框架化（`tgbot` 静态库 + `include/tgbot` 公共头 + examples 结构），新增 `deleteMessage` / `getChatMember` / `co_sleep`，附群管理机器人示例
 - [x] M8：webhook 模式（`webhookLoop`，Boost.Beast HTTP/1.1 服务端，TLS 直连或反代两种形态，secret token 校验，与长轮询共用 Dispatcher 和按 chat strand 串行语义）
+- [x] M10：稳定性修复（offset 原子写跨平台、CA 证书运行时定位、409 自动清理残留 webhook、永久错误退出、限速器突发超速、webhook 协程生命周期、写操作不重试传输错误）
 
-运行时会生成 `tg_bot.offset`（长轮询确认位点，重启续传用），别删。
+### 长轮询的"停机语义"（重要）
+
+默认行为是**启动时清空停机期间积压的 updates**（"停机即完全停止"，重启不补放
+旧消息），`tg_bot.offset` 只是这条路径上的兜底位点。要求"重启后补收未确认消息"
+的话，用配置版入口显式打开续传：
+
+```cpp
+tgbot::LongPollOptions opts;
+opts.dropPendingUpdates = false;          // 从持久化 offset 续传
+opts.offsetFile = "/var/lib/mybot/tg_bot.offset";  // 默认 CWD 下的 tg_bot.offset
+opts.allowedUpdates = R"(["message","callback_query","edited_message"])";
+co_await tgbot::longPollLoop(bot, dispatcher, opts, &gShuttingDown);
+```
+
+Telegram 只保留最近 24 小时的 update，所以续传最多补这么久。两种语义都合理，
+但必须显式选一个——旧版 README 写的是"重启不丢消息"，代码实际一直在启动时清空。
+
+**永久错误的处理**：`401/403/404`（token 失效 / 被封 / 接口不存在）默认让长轮询
+**打一条 error 后退出进程（退出码 1）**，交给 systemd / 容器的重启策略——因为
+`getUpdates` 永久失败意味着一条消息都收不到，进程留着只会伪装成"还活着"。
+想让它一直退避重试的话：
+
+```cpp
+opts.permanentErrorPolicy =
+    tgbot::LongPollOptions::PermanentErrorPolicy::kRetryForever;
+```
+
+注意作用域：这只管 `getUpdates`。业务 handler 里的 403（被踢出群、没有删消息
+权限、回复太老的消息）只会被 `Dispatcher` 记一条日志，**不会**让进程退出。
 
 ### webhook 模式
 
@@ -63,8 +93,10 @@ co_await tgbot::webhookLoop(bot, dispatcher, cfg, &gShuttingDown);
 ```
 
 - Telegram 以 HTTP/1.1 POST 投递 update，非 2xx 会自动重试；停机期间回 503 且不再派发，积压由下次启动的 `drop_pending_updates` 清掉（与长轮询"停机即停止"语义一致）
+- 监听地址默认 `127.0.0.1`（反代形态不该把明文端口暴露在公网）；要直连或容器内暴露用 `WEBHOOK_HOST=0.0.0.0`
 - 本地自测接收端：`registerOnStart = false`（group_admin 用 `TG_WEBHOOK_SKIP_REGISTER=1`），不碰真实 webhook 配置，直接向本地端口伪造 POST 即可
 - 与 `getUpdates` 互斥；`maxConnections` 默认 40（Telegram 并发投递上限）
+- 从 webhook 模式切回长轮询**不需要手工操作**：长轮询遇到 409 会先 `deleteWebhook` 再重试，日志里会明确写出来
 
 ## 踩坑记录（协程必读）
 
@@ -113,6 +145,14 @@ fi
 cmake -B build -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_TOOLCHAIN_FILE="$PWD/.vcpkg/scripts/buildsystems/vcpkg.cmake"
 cmake --build build
+
+# Linux 想要全静态（musl）：在 Alpine 里加 overlay triplet 并显式打开 TGBOT_STATIC
+# cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+#       -DCMAKE_TOOLCHAIN_FILE="$PWD/.vcpkg/scripts/buildsystems/vcpkg.cmake" \
+#       -DVCPKG_OVERLAY_TRIPLETS="$PWD/triplets" \
+#       -DVCPKG_TARGET_TRIPLET=x64-linux-musl -DTGBOT_STATIC=ON
+# TGBOT_STATIC 默认按 triplet 自动推断：带 musl 的 triplet 自动打开，否则关闭
+# （glibc + 动态 triplet 加 -static 会报 attempted static link of dynamic object）
 
 # Windows（Developer PowerShell / Git Bash 均可）
 .\.vcpkg\bootstrap-vcpkg.bat -disableMetrics
@@ -167,7 +207,15 @@ export TG_BOT_TOKEN=<你的token> && ./build/group_admin
 
 ## 备注
 
+- **退出码**：启动失败（错 token、端口被占、webhook 注册失败）退出码是 1；
+  运行中遇到 401/403/404 这类永久错误也会直接退出而不是无限重试，
+  方便 systemd `Restart=on-failure` / 容器重启策略生效
+- **CA 证书查找顺序**：`SSL_CERT_FILE` → 可执行文件同目录 `cacert.pem` →
+  当前工作目录 `cacert.pem` → 构建期路径；全都找不到时启动日志会打 error
+  （此时 TLS 一定失败）。发布包已经把 `cacert.pem` 放在 exe 旁边
 - Linux 静态链接请认准 musl（Alpine）；glibc `-static` 有 NSS 警告，
-  不建议用于交付
-- Windows 产物目录里的 `cacert.pem` 需要和 exe 放在一起（TLS 校验用）
+  不建议用于交付。`TGBOT_STATIC` 默认按 triplet 自动推断（名里带 `musl` 才打开），
+  仍可用 `-DTGBOT_STATIC=ON/OFF` 强制覆盖
 - macOS 因系统限制无法静态链接系统库，产物为普通动态二进制
+- 运行时状态文件（`tg_bot.offset` / `group_admin_state.db*`）属于部署数据，
+  已加入 `.gitignore`，别再提交进仓库

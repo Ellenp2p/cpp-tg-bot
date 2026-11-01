@@ -83,8 +83,14 @@ jobs:
             -DVCPKG_TARGET_TRIPLET=x64-linux-musl \
             -DTGBOT_STATIC=ON
           cmake --build build
-          echo "=== linkage check ==="
-          ldd build/echo_bot build/group_admin || echo "fully static"
+          echo "=== linkage check（必须全静态）==="
+          for bin in build/echo_bot build/group_admin; do
+            if readelf -l "$bin" | grep -q INTERP; then
+              echo "ERROR: $bin 仍是动态链接（存在 INTERP 段）"
+              exit 1
+            fi
+            echo "OK: $bin is static"
+          done
 
       - name: Get vcpkg (macOS / Windows)
         if: ${{ matrix.name != 'linux-static' }}
