@@ -259,6 +259,47 @@ bool RedPacketLedger::beginRefund(std::int64_t id) {
     return sqlite3_changes(db_) == 1;
 }
 
+std::vector<RedPacketRow> RedPacketLedger::listRefundable(
+    std::int64_t nowSeconds, std::size_t limit) const {
+    std::vector<RedPacketRow> rows;
+    Statement stmt(
+        db_,
+        "SELECT id, chat_id, message_id, creator_id, total_cents,"
+        " total_count, remaining_cents, remaining_count, state,"
+        " created_at, expires_at, tx_ref"
+        " FROM red_packets"
+        " WHERE state='expired' OR (state='open' AND expires_at<=?)"
+        " ORDER BY id LIMIT ?");
+    stmt.bindInt64(1, nowSeconds);
+    stmt.bindInt64(2, static_cast<std::int64_t>(limit));
+    while (stmt.step()) {
+        RedPacketRow row;
+        row.id = stmt.columnInt64(0);
+        row.chatId = stmt.columnInt64(1);
+        row.messageId = stmt.columnInt64(2);
+        row.creatorId = stmt.columnInt64(3);
+        row.totalCents = stmt.columnInt64(4);
+        row.totalCount = stmt.columnInt64(5);
+        row.remainingCents = stmt.columnInt64(6);
+        row.remainingCount = stmt.columnInt64(7);
+        row.state = stmt.columnText(8);
+        row.createdAt = stmt.columnInt64(9);
+        row.expiresAt = stmt.columnInt64(10);
+        row.txRef = stmt.columnText(11);
+        rows.push_back(std::move(row));
+    }
+    return rows;
+}
+
+bool RedPacketLedger::revertRefund(std::int64_t id) {
+    Statement stmt(db_,
+                   "UPDATE red_packets SET state='expired'"
+                   " WHERE id=? AND state='refunding'");
+    stmt.bindInt64(1, id);
+    stmt.run();
+    return sqlite3_changes(db_) == 1;
+}
+
 void RedPacketLedger::finishRefund(std::int64_t id, std::string_view txRef) {
     Statement stmt(db_,
                    "UPDATE red_packets SET state='refunded', tx_ref=?"

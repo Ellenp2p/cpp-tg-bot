@@ -65,10 +65,15 @@ public:
 
     // open → expired；返回 true 表示这次真的改了状态
     bool markExpired(std::int64_t id);
+    // 列出"该退款"的红包：state='expired'，或 state='open' 但已过期
+    std::vector<RedPacketRow> listRefundable(std::int64_t nowSeconds,
+                                             std::size_t limit) const;
     // open/expired → refunding；返回 true 才由你负责执行退款
     bool beginRefund(std::int64_t id);
     // refunding → refunded，记下外部凭据
     void finishRefund(std::int64_t id, std::string_view txRef);
+    // refunding → expired（批量里明确失败的那几笔，留给下一轮重试）
+    bool revertRefund(std::int64_t id);
 
 private:
     void exec(const char* sql) const;
