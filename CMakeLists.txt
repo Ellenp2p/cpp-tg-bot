@@ -3,6 +3,11 @@ project(tg_bot_framework VERSION 0.2.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# 源码是 UTF-8（含中文注释），MSVC 必须显式指定，否则按系统代码页解析会报怪错
+if(MSVC)
+    add_compile_options(/utf-8 /permissive-)
+endif()
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 if(MSVC)
@@ -21,6 +26,7 @@ else()
 endif()
 find_package(OpenSSL REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
+find_package(unofficial-argon2 CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
 find_package(unofficial-sqlite3 CONFIG REQUIRED)
 find_package(Threads REQUIRED)
@@ -142,4 +148,23 @@ if(TGBOT_BUILD_EXAMPLES)
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${TGBOT_CACERT_PATH}" $<TARGET_FILE_DIR:group_admin>)
     endif()
+endif()
+
+# ---- Sui SDK（链上部分，独立静态库） ----
+add_library(sui_sdk STATIC
+    sui/src/client.cpp
+    sui/src/crypto.cpp
+    sui/src/pow.cpp
+    sui/src/transaction.cpp
+)
+target_include_directories(sui_sdk PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/sui/include")
+target_link_libraries(sui_sdk PUBLIC OpenSSL::Crypto nlohmann_json::nlohmann_json unofficial::argon2::libargon2 tgbot)
+
+if(TGBOT_BUILD_TESTS)
+    add_executable(sui_tests sui/tests/sui_tests.cpp)
+    target_link_libraries(sui_tests PRIVATE sui_sdk)
+    add_test(NAME sui_tests COMMAND sui_tests)
+
+    add_executable(sui_cli sui/tools/sui_cli.cpp)
+    target_link_libraries(sui_cli PRIVATE sui_sdk)
 endif()
