@@ -4,6 +4,7 @@
   "description": "Async Telegram bot framework in C++20 with Boost.Asio coroutines",
   "builtin-baseline": "d186940b2f0c4e8e5b4ff804af57d2a26fbfa091",
   "dependencies": [
+    "argon2",
     "boost-asio",
     "boost-beast",
     "openssl",
