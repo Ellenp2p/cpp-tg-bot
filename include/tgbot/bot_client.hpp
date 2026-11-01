@@ -2,6 +2,7 @@
 
 #include <tgbot/http_client.hpp>
 #include <tgbot/rate_limiter.hpp>
+#include <tgbot/rich_text.hpp>
 
 #include <nlohmann/json.hpp>
 
@@ -37,6 +38,13 @@ inline constexpr char kDefaultAllowedUpdates[] = R"(["message","callback_query"]
 //   请求可能已被服务端处理、只是响应丢了，重试会造成重复消息/重复操作，
 //   所以直接失败让业务决定
 enum class RetryPolicy { kDefault, kNoTransportRetry };
+
+// 发送类接口的富文本/预览控制。
+// 程序拼接内容优先用 kHtml（只需转义 & < >），见 tgbot/rich_text.hpp
+struct SendOptions {
+    ParseMode parseMode = ParseMode::kNone;
+    bool disableWebPagePreview = false;
+};
 
 // Ephemeral Message 参数（Bot API 10.2+）：发送"群里只有指定用户可见"的消息。
 // 两种合法用法：
@@ -93,6 +101,10 @@ public:
         std::string allowedUpdates = kDefaultAllowedUpdates);
     boost::asio::awaitable<nlohmann::json> sendMessage(
         std::int64_t chatId, const std::string& text);
+    // 带富文本 / 关预览的版本（parse_mode 见 SendOptions）
+    boost::asio::awaitable<nlohmann::json> sendMessage(
+        std::int64_t chatId, const std::string& text,
+        const SendOptions& options);
     // 带 inline 键盘的版本，replyMarkup 形如
     // {{"inline_keyboard", json::array({{{{"text", "..."}, {"callback_data", "..."}}}})}}
     // （inline_keyboard 是"行数组的数组"，最内层是按钮对象；
@@ -102,6 +114,10 @@ public:
         const nlohmann::json& replyMarkup);
     boost::asio::awaitable<nlohmann::json> editMessageText(
         std::int64_t chatId, std::int64_t messageId, const std::string& text);
+    // 带富文本的版本（流式输出就是靠反复调它实现的）
+    boost::asio::awaitable<nlohmann::json> editMessageText(
+        std::int64_t chatId, std::int64_t messageId, const std::string& text,
+        const SendOptions& options);
     // 回按钮的"气泡提示"（alert=false 时为轻提示）
     boost::asio::awaitable<void> answerCallbackQuery(
         const std::string& callbackQueryId, const std::string& text = "");
