@@ -19,6 +19,7 @@
 // - 长轮询：不加任何环境变量，直接跑（适合本机/无公网）
 // - webhook：设置 TG_WEBHOOK_URL=https://<域名>/<路径>
 //     可选：TG_WEBHOOK_SECRET=<随机串>（强烈建议，校验投递来源）
+//           WEBHOOK_HOST=<监听地址>（默认 127.0.0.1，直连/容器内暴露用 0.0.0.0）
 //           WEBHOOK_PORT=<端口>（默认 8080）
 //           WEBHOOK_TLS_CERT / WEBHOOK_TLS_KEY=<PEM 路径>（两者都设则进程内
 //           直接 HTTPS；都不设则监听明文端口，需 Caddy/nginx 反代终结 TLS）
@@ -29,6 +30,9 @@
 //       否则对应功能会失败并在日志中给出具体原因。
 
 #include <tgbot/tg_bot.hpp>
+
+// SQLite 后端是可选组件，不在 tg_bot.hpp 总入口里
+#include <tgbot/sqlite_state_store.hpp>
 
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
@@ -44,8 +48,10 @@
 #include <cstdlib>
 #include <exception>
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace net = boost::asio;
@@ -90,7 +96,11 @@ public:
         const auto v = store_.get(delayKey(chatId));
         if (v) {
             try {
-                return std::chrono::seconds{std::stol(*v)};
+                const long sec = std::stol(*v);
+                // 写入侧已夹过范围，这里再夹一次：DB 被手改或写坏时，
+                // 负数会让 steady_timer 立即触发 = 见贴纸就删
+                return std::chrono::seconds{
+                    std::clamp(sec, kMinDelaySec, kMaxDelaySec)};
             } catch (const std::exception&) {
                 // 落默认
             }
@@ -216,15 +226,18 @@ private:
     tgbot::StateStore& store_;
 };
 
-net::awaitable<bool> isGroupAdmin(BotClient& bot, std::int64_t chatId,
-                                  std::int64_t userId) {
+// 返回值：true = 管理员，false = 不是，nullopt = 查询失败。
+// 查询失败不能当成"不是管理员"，否则网络抖一下就会告诉群主"你没有权限"。
+net::awaitable<std::optional<bool>> isGroupAdmin(BotClient& bot,
+                                                 std::int64_t chatId,
+                                                 std::int64_t userId) {
     try {
         const auto member = co_await bot.getChatMember(chatId, userId);
         const auto status = member.value("status", std::string{});
         co_return status == "creator" || status == "administrator";
     } catch (const std::exception& e) {
         spdlog::warn("getChatMember failed: {}", e.what());
-        co_return false;
+        co_return std::nullopt;
     }
 }
 
@@ -233,7 +246,7 @@ net::awaitable<bool> isGroupAdmin(BotClient& bot, std::int64_t chatId,
 void scheduleDelete(BotClient& bot, std::int64_t chatId,
                     std::int64_t messageId, std::chrono::seconds delay,
                     const net::any_io_executor& executor,
-                    const char* what) {
+                    std::string what) {
     net::co_spawn(
         executor,
         [&bot, chatId, messageId, delay, what]() -> net::awaitable<void> {
@@ -277,8 +290,26 @@ net::awaitable<void> replyAndSweep(BotClient& bot, const json& msg,
     }
 }
 
-// ---- Ephemeral 演示辅助（Bot API 10.2+）----
+// 群管理员校验 + 统一拒绝话术：返回 false 表示调用方应立即 co_return。
+// 查询失败（网络/权限）与"确实不是管理员"分开提示，别把故障说成越权。
+net::awaitable<bool> requireGroupAdmin(BotClient& bot, const json& msg,
+                                       std::int64_t chatId,
+                                       std::int64_t userId) {
+    const auto admin = co_await isGroupAdmin(bot, chatId, userId);
+    if (!admin.has_value()) {
+        co_await replyAndSweep(
+            bot, msg, "查询你的群身份失败（网络或权限问题），请稍后重试。");
+        co_return false;
+    }
+    if (!*admin) {
+        co_await replyAndSweep(
+            bot, msg, "只有群管理员可以修改设置（发命令时不带参数可查看状态）。");
+        co_return false;
+    }
+    co_return true;
+}
 
+// ---- Ephemeral 演示辅助（Bot API 10.2+）----
 // 每人每天一个确定性专属码（演示用，同一人当天刷新码不变）
 std::string dailyCode(std::int64_t userId) {
     const auto days = std::chrono::duration_cast<std::chrono::hours>(
@@ -327,9 +358,21 @@ json mutedPerms() {
     return {{"can_send_messages", false}, {"can_invite_users", true}};
 }
 
-// 白名单成员权限：完整放行发言
+// 白名单成员权限：完整放行各类发言。
+// 注意 restrictChatMember 里**没有列出的权限一律按 false 处理**，只给
+// can_send_messages=true 会让白名单成员连图片/贴纸/投票都发不了，
+// 表现成"放行了但还是发不出东西"。
 json allowedPerms() {
-    return {{"can_send_messages", true}};
+    return {{"can_send_messages", true},
+            {"can_send_audios", true},
+            {"can_send_documents", true},
+            {"can_send_photos", true},
+            {"can_send_videos", true},
+            {"can_send_video_notes", true},
+            {"can_send_voice_notes", true},
+            {"can_send_polls", true},
+            {"can_send_other_messages", true},
+            {"can_add_web_page_previews", true}};
 }
 
 // 无快照可用时的兜底恢复权限（正常路径用开启前快照，不会走到这里）
@@ -354,6 +397,20 @@ std::int64_t targetFromReply(const json& msg) {
     return from->value("id", std::int64_t{0});
 }
 
+// 从 callback_query 取聊天 id。inline 模式来源的回调只有 inline_message_id、
+// 没有 message 字段，直接 cq["message"]["chat"] 会抛异常。
+std::int64_t chatIdOfCallback(const json& cq) {
+    const auto m = cq.find("message");
+    if (m == cq.end() || !m->is_object()) {
+        return 0;
+    }
+    const auto c = m->find("chat");
+    if (c == m->end() || !c->is_object()) {
+        return 0;
+    }
+    return c->value("id", std::int64_t{0});
+}
+
 std::string joinIds(const std::vector<std::int64_t>& ids) {
     std::string s;
     for (std::size_t i = 0; i < ids.size(); ++i) {
@@ -371,19 +428,22 @@ std::string joinIds(const std::vector<std::int64_t>& ids) {
 // 停机期间的消息一律忽略（配合启动时的积压清空，实现"停机即完全停止"）
 std::atomic<bool> gShuttingDown{false};
 
-net::awaitable<void> run(const std::string& token) {
+net::awaitable<int> run(const std::string& token) {
     BotClient bot(token);
 
     std::int64_t botId = 0;
+    std::string botUsername;
     try {
         const auto me = co_await bot.getMe();
         botId = me.value("id", std::int64_t{0});
+        botUsername = me.value("username", std::string{});
         spdlog::info("Connected as @{} (id={})",
                      me.value("username", std::string("?")),
                      me.value("id", 0L));
     } catch (const std::exception& e) {
+        // 错 token / 网络不可达：非 0 退出，让 systemd/容器的重启策略生效
         spdlog::error("getMe failed: {}", e.what());
-        co_return;
+        co_return 1;
     }
 
     // 设置客户端命令菜单，失败不阻断启动
@@ -406,6 +466,8 @@ net::awaitable<void> run(const std::string& token) {
     GroupState state(store);
 
     tgbot::Dispatcher dispatcher;
+    // 群里多个 bot 时，"/sticker@OtherBot on" 不归我们处理
+    dispatcher.setBotUsername(botUsername);
 
     // /start /help —— 欢迎语 + 功能总览（群里同样可用，但会被 20 秒清理）
     const auto helpText =
@@ -517,8 +579,7 @@ net::awaitable<void> run(const std::string& token) {
 
         // ---- 以下变更操作仅群管理员可用 ----
         const auto userId = msg["from"].value("id", std::int64_t{0});
-        if (!co_await isGroupAdmin(bot, chatId, userId)) {
-            co_await reply("只有群管理员可以修改设置。（发 /sticker 可查看状态）");
+        if (!co_await requireGroupAdmin(bot, msg, chatId, userId)) {
             co_return;
         }
 
@@ -601,8 +662,7 @@ net::awaitable<void> run(const std::string& token) {
 
         // 以下变更操作仅群管理员可用
         const auto userId = msg["from"].value("id", std::int64_t{0});
-        if (!co_await isGroupAdmin(bot, chatId, userId)) {
-            co_await replyAndSweep(bot, msg, "只有群管理员可以修改设置。");
+        if (!co_await requireGroupAdmin(bot, msg, chatId, userId)) {
             co_return;
         }
 
@@ -651,7 +711,7 @@ net::awaitable<void> run(const std::string& token) {
     });
 
     // /silent —— 静默模式（硬禁言：改群默认权限，非管理员输入框直接被禁用）
-    // 无参数/list：查状态（任何人）；on/off/allow/deny：仅群管理员
+    // 无参数：查状态（任何人）；list/on/off/allow/deny：仅群管理员
     dispatcher.onCommand(
         "silent", [&state](BotClient& bot,
                            const json msg) -> net::awaitable<void> {
@@ -672,7 +732,7 @@ net::awaitable<void> run(const std::string& token) {
             const std::string sub =
                 sp2 == std::string::npos ? "" : arg.substr(sp2 + 1);
 
-            // 无参数：状态面板（任何人可用）
+            // 无参数：状态面板（任何人可用，但只报人数，不暴露白名单 ID）
             if (arg.empty()) {
                 const auto ids = state.silentAllowlist(chatId);
                 co_await replyAndSweep(
@@ -681,10 +741,16 @@ net::awaitable<void> run(const std::string& token) {
                                 (state.silentEnabled(chatId)
                                      ? std::string{"已开启 🔇 只有管理员和白名单成员能发言"}
                                      : std::string{"已关闭"}) +
-                                "\n发言放行：" +
-                                std::to_string(ids.size()) + " 人" +
-                                (ids.empty() ? "" : "（" + joinIds(ids) + "）") +
-                                "\n管理员：/silent on|off|allow|deny"});
+                                "\n发言放行：" + std::to_string(ids.size()) +
+                                " 人（/silent list 查看名单，仅管理员）" +
+                                "\n管理员：/silent on|off|allow|deny|list"});
+                co_return;
+            }
+
+            // list 与变更操作一样只给管理员：白名单属于群管理信息，
+            // 不该被任意群成员看到
+            const auto userId = msg["from"].value("id", std::int64_t{0});
+            if (!co_await requireGroupAdmin(bot, msg, chatId, userId)) {
                 co_return;
             }
 
@@ -695,13 +761,6 @@ net::awaitable<void> run(const std::string& token) {
                                   ? "静默白名单为空。"
                                   : "静默白名单（" + std::to_string(ids.size()) +
                                         " 人）：" + joinIds(ids));
-                co_return;
-            }
-
-            // 以下变更操作仅群管理员可用
-            const auto userId = msg["from"].value("id", std::int64_t{0});
-            if (!co_await isGroupAdmin(bot, chatId, userId)) {
-                co_await replyAndSweep(bot, msg, "只有群管理员可以修改设置。");
                 co_return;
             }
 
@@ -716,8 +775,7 @@ net::awaitable<void> run(const std::string& token) {
                 std::string failMsg;
                 try {
                     const auto chat = co_await bot.getChat(chatId);
-                    snap =
-                        chat.value("permissions", json::object()).dump();
+                    snap = chat.value("permissions", json::object()).dump();
                 } catch (const std::exception& e) {
                     failMsg = e.what();
                 }
@@ -729,20 +787,39 @@ net::awaitable<void> run(const std::string& token) {
                             failMsg);
                     co_return;
                 }
-                // 2) 全员禁言
+                // 空快照绝对不能用：之后 /silent off 会把它当成"恢复成所有
+                // 权限 false"，等于把群永久锁死，而且快照随即被清掉、无从恢复
+                bool havePerms = false;
+                try {
+                    const auto parsed = json::parse(snap);
+                    havePerms = parsed.is_object() && !parsed.empty();
+                } catch (const std::exception&) {
+                    havePerms = false;
+                }
+                if (!havePerms) {
+                    co_await replyAndSweep(
+                        bot, msg,
+                        "开启失败：getChat 没有返回群默认权限（permissions），"
+                        "无法保证之后能恢复原设置，操作已取消。");
+                    co_return;
+                }
+                // 2) **先落库快照，再真的禁言**：顺序反过来的话，进程在两步
+                //    之间挂掉就会留下"群被禁言且没有快照可恢复"的死局
+                state.setSilentSnapshot(chatId, snap);
+                std::string muteFail;
                 try {
                     co_await bot.setChatPermissions(chatId, mutedPerms());
                 } catch (const std::exception& e) {
-                    failMsg = e.what();
+                    muteFail = e.what();
                 }
-                if (!failMsg.empty()) {
+                if (!muteFail.empty()) {
+                    state.clearSilentSnapshot(chatId);
                     co_await replyAndSweep(
                         bot, msg,
                         std::string{"开启失败（需要我有“限制成员”权限）："} +
-                            failMsg);
+                            muteFail);
                     co_return;
                 }
-                state.setSilentSnapshot(chatId, snap);
                 state.setSilent(chatId, true);
                 // 3) 对白名单成员恢复个人放行（覆盖群默认禁言）
                 for (const auto id : state.silentAllowlist(chatId)) {
@@ -768,18 +845,25 @@ net::awaitable<void> run(const std::string& token) {
                                            "静默模式当前没有开启。");
                     co_return;
                 }
-                // 1) 恢复原群默认权限（快照缺失时用兜底默认）
+                // 1) 恢复原群默认权限（快照缺失/损坏时用兜底默认）
                 json restore = defaultOpenPerms();
                 const auto snap = state.silentSnapshot(chatId);
-                if (snap) {
+                bool fromSnapshot = false;
+                if (snap && !snap->empty() && *snap != "{}") {
                     try {
                         const auto parsed = json::parse(*snap);
-                        if (parsed.is_object()) {
+                        if (parsed.is_object() && !parsed.empty()) {
                             restore = parsed;
+                            fromSnapshot = true;
                         }
                     } catch (const std::exception&) {
                         // 快照损坏，用兜底默认
                     }
+                }
+                if (!fromSnapshot) {
+                    spdlog::warn(
+                        "silent off: chat={} 没有可用的权限快照，用兜底默认恢复",
+                        chatId);
                 }
                 std::string failMsg;
                 try {
@@ -787,22 +871,24 @@ net::awaitable<void> run(const std::string& token) {
                 } catch (const std::exception& e) {
                     failMsg = e.what();
                 }
-                // 2) 解除白名单成员的个人放行
+                if (!failMsg.empty()) {
+                    // 恢复失败就保持静默状态、不动白名单，让管理员能重试；
+                    // 别在"权限没恢复"的情况下清掉状态假装已经关了
+                    co_await replyAndSweep(
+                        bot, msg,
+                        std::string{"恢复原权限失败："} + failMsg +
+                            "\n仍处于静默模式：请检查我的“限制成员”权限后重试，"
+                            "或手动在群设置里调整。");
+                    co_return;
+                }
+                // 2) 解除白名单成员的个人放行（用同一份 restore，保证与群默认一致）
                 for (const auto id : state.silentAllowlist(chatId)) {
                     try {
-                        co_await bot.restrictChatMember(chatId, id,
-                                                        defaultOpenPerms());
+                        co_await bot.restrictChatMember(chatId, id, restore);
                     } catch (const std::exception& e) {
                         spdlog::warn("unrestrict {} in {} failed: {}", id,
                                      chatId, e.what());
                     }
-                }
-                if (!failMsg.empty()) {
-                    co_await replyAndSweep(
-                        bot, msg,
-                        std::string{"恢复原权限失败："} + failMsg +
-                            "\n请管理员手动在群设置里调整权限。");
-                    co_return;
                 }
                 state.setSilent(chatId, false);
                 state.clearSilentSnapshot(chatId);
@@ -913,8 +999,12 @@ net::awaitable<void> run(const std::string& token) {
         "eph:claim",
         [](BotClient& bot, const json cq) -> net::awaitable<void> {
             const auto userId = cq["from"].value("id", std::int64_t{0});
-            const auto chatId =
-                cq["message"]["chat"].value("id", std::int64_t{0});
+            const auto chatId = chatIdOfCallback(cq);
+            if (chatId == 0) {
+                co_await bot.answerCallbackQuery(cq.value("id", std::string{}),
+                                                 "这个按钮只在群里有效");
+                co_return;
+            }
             tgbot::EphemeralMessageParameters eph;
             eph.receiverUserId = userId;
             eph.callbackQueryId = cq.value("id", std::string{});
@@ -932,11 +1022,14 @@ net::awaitable<void> run(const std::string& token) {
         "eph:refresh",
         [](BotClient& bot, const json cq) -> net::awaitable<void> {
             const auto userId = cq["from"].value("id", std::int64_t{0});
-            const auto& m = cq["message"];
-            const auto chatId = m["chat"].value("id", std::int64_t{0});
+            const auto msgIt = cq.find("message");
+            if (msgIt == cq.end() || !msgIt->is_object()) {
+                co_return;
+            }
+            const auto chatId = chatIdOfCallback(cq);
             const auto ephId =
-                m.value("ephemeral_message_id", std::int64_t{0});
-            if (ephId == 0) {
+                msgIt->value("ephemeral_message_id", std::int64_t{0});
+            if (chatId == 0 || ephId == 0) {
                 co_return;  // 不是 ephemeral 消息上的按钮
             }
             co_await bot.editEphemeralMessageText(
@@ -950,11 +1043,14 @@ net::awaitable<void> run(const std::string& token) {
         "eph:destroy",
         [](BotClient& bot, const json cq) -> net::awaitable<void> {
             const auto userId = cq["from"].value("id", std::int64_t{0});
-            const auto& m = cq["message"];
-            const auto chatId = m["chat"].value("id", std::int64_t{0});
+            const auto msgIt = cq.find("message");
+            if (msgIt == cq.end() || !msgIt->is_object()) {
+                co_return;
+            }
+            const auto chatId = chatIdOfCallback(cq);
             const auto ephId =
-                m.value("ephemeral_message_id", std::int64_t{0});
-            if (ephId == 0) {
+                msgIt->value("ephemeral_message_id", std::int64_t{0});
+            if (chatId == 0 || ephId == 0) {
                 co_return;
             }
             co_await bot.deleteEphemeralMessage(chatId, userId, ephId);
@@ -1141,6 +1237,11 @@ net::awaitable<void> run(const std::string& token) {
                 spdlog::warn("invalid WEBHOOK_PORT '{}', fallback to 8080", p);
             }
         }
+        // 默认只监听回环，由反代终结 TLS；要直连或容器内暴露时设成 0.0.0.0
+        if (const char* h = std::getenv("WEBHOOK_HOST");
+            h != nullptr && *h != '\0') {
+            cfg.host = h;
+        }
         if (const char* c = std::getenv("WEBHOOK_TLS_CERT");
             c != nullptr && *c != '\0') {
             cfg.tlsCert = c;
@@ -1154,8 +1255,8 @@ net::awaitable<void> run(const std::string& token) {
             skip != nullptr && *skip != '\0') {
             cfg.registerOnStart = false;
         }
-        spdlog::info("Webhook mode: {} (port {}, tls={})", cfg.publicUrl,
-                     cfg.port,
+        spdlog::info("Webhook mode: {} (listen {}:{}, tls={})", cfg.publicUrl,
+                     cfg.host, cfg.port,
                      (!cfg.tlsCert.empty() && !cfg.tlsKey.empty()) ? "on"
                                                                    : "off");
         // webhook 模式：停机期间 Telegram 重试会收到 503，
@@ -1165,6 +1266,7 @@ net::awaitable<void> run(const std::string& token) {
         spdlog::info("Long polling started, Ctrl+C to stop");
         co_await tgbot::longPollLoop(bot, dispatcher, &gShuttingDown);
     }
+    co_return 0;
 }
 
 int main(int argc, char** argv) {
@@ -1195,17 +1297,22 @@ int main(int argc, char** argv) {
         }
     });
 
-    net::co_spawn(io, run(token), [&io](std::exception_ptr e) {
-        if (e) {
-            try {
-                std::rethrow_exception(e);
-            } catch (const std::exception& ex) {
-                spdlog::error("fatal: {}", ex.what());
-            }
-        }
-        io.stop();
-    });
+    int exitCode = 0;
+    net::co_spawn(io, run(token),
+                  [&io, &exitCode](std::exception_ptr e, int code) {
+                      if (e) {
+                          try {
+                              std::rethrow_exception(e);
+                          } catch (const std::exception& ex) {
+                              spdlog::error("fatal: {}", ex.what());
+                          }
+                          exitCode = 1;
+                      } else {
+                          exitCode = code;
+                      }
+                      io.stop();
+                  });
     io.run();
     spdlog::info("bye");
-    return 0;
+    return exitCode;
 }

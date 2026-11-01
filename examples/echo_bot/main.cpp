@@ -18,17 +18,21 @@
 namespace net = boost::asio;
 using nlohmann::json;
 
-net::awaitable<void> run(const std::string& token) {
+net::awaitable<int> run(const std::string& token) {
     tgbot::BotClient bot(token);
 
+    std::string botUsername;
     try {
         const auto me = co_await bot.getMe();
+        botUsername = me.value("username", std::string{});
         spdlog::info("Connected as @{} (id={})",
                      me.value("username", std::string("?")),
                      me.value("id", 0L));
     } catch (const std::exception& e) {
+        // 错 token / 网络不可达：必须让进程以非 0 退出，
+        // 否则 systemd/容器的重启策略永远不会触发
         spdlog::error("getMe failed: {}", e.what());
-        co_return;
+        co_return 1;
     }
 
     // 设置客户端命令菜单，失败不阻断启动
@@ -42,6 +46,8 @@ net::awaitable<void> run(const std::string& token) {
     }
 
     tgbot::Dispatcher dispatcher;
+    // 群里多个 bot 时，"/inline@OtherBot" 不归我们处理
+    dispatcher.setBotUsername(botUsername);
 
     dispatcher.onCommand("start", [](tgbot::BotClient& bot,
                                      const json msg) -> net::awaitable<void> {
@@ -89,6 +95,7 @@ net::awaitable<void> run(const std::string& token) {
 
     spdlog::info("Long polling started, Ctrl+C to stop");
     co_await tgbot::longPollLoop(bot, dispatcher);
+    co_return 0;
 }
 
 int main(int argc, char** argv) {
@@ -99,7 +106,7 @@ int main(int argc, char** argv) {
         token = env;
     }
     if (token.empty()) {
-        std::cerr << "usage: tg_bot <bot-token>\n"
+        std::cerr << "usage: echo_bot <bot-token>\n"
                      "   or: set TG_BOT_TOKEN environment variable\n";
         return 1;
     }
@@ -118,19 +125,24 @@ int main(int argc, char** argv) {
         }
     });
 
-    net::co_spawn(io, run(token), [&io](std::exception_ptr e) {
-        // 主协程结束（启动失败等）时退出事件循环；否则 signal_set 的
-        // 挂起等待会让 io.run() 永远不返回
-        if (e) {
-            try {
-                std::rethrow_exception(e);
-            } catch (const std::exception& ex) {
-                spdlog::error("fatal: {}", ex.what());
-            }
-        }
-        io.stop();
-    });
+    int exitCode = 0;
+    net::co_spawn(io, run(token),
+                  [&io, &exitCode](std::exception_ptr e, int code) {
+                      // 主协程结束（启动失败等）时退出事件循环；否则
+                      // signal_set 的挂起等待会让 io.run() 永远不返回
+                      if (e) {
+                          try {
+                              std::rethrow_exception(e);
+                          } catch (const std::exception& ex) {
+                              spdlog::error("fatal: {}", ex.what());
+                          }
+                          exitCode = 1;
+                      } else {
+                          exitCode = code;
+                      }
+                      io.stop();
+                  });
     io.run();
     spdlog::info("bye");
-    return 0;
+    return exitCode;
 }
