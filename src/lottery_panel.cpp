@@ -56,7 +56,9 @@ PanelView LotteryPanel::render() const {
                 text += it != participants_.end() ? escapeHtml(it->second)
                                                   : std::to_string(winners_[i]);
             }
-            text += "\n中奖者请看只有自己能收到的那条消息 👀";
+            if (config_.rewardPrivate) {
+                text += "\n中奖者请看只有自己能收到的那条消息 👀";
+            }
         }
     } else {
         text += "剩余：" + formatRemaining(remaining()) + "\n";
@@ -156,6 +158,9 @@ void LotteryPanel::draw(PanelEffects& effects) {
         static_cast<std::size_t>(std::max(1, config_.winnerCount)), ids.size());
     winners_.assign(ids.begin(), ids.begin() + static_cast<std::ptrdiff_t>(count));
 
+    if (!config_.rewardPrivate) {
+        return;  // 默认只在群里公布名单，不私下发码
+    }
     for (const auto id : winners_) {
         PanelEffects::Private pm;
         pm.userId = id;
