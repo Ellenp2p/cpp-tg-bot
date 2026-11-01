@@ -1,9 +1,12 @@
 #include <tgbot/bot_client.hpp>
 #include <tgbot/dispatcher.hpp>
+#include <tgbot/job_queue.hpp>
 #include <tgbot/long_poll.hpp>
 #include <tgbot/lottery_panel.hpp>
 #include <tgbot/panel.hpp>
+#include <tgbot/red_packet_ledger.hpp>
 #include <tgbot/red_packet_panel.hpp>
+#include <tgbot/red_packet_service.hpp>
 #include <tgbot/rich_text.hpp>
 #include <tgbot/stream_message.hpp>
 #include <tgbot/util.hpp>
@@ -69,6 +72,22 @@ net::awaitable<int> run(const std::string& token) {
     // 操作台：一条消息 = 一块可交互面板（抽奖/红包等）。ticker 负责倒计时开奖
     tgbot::PanelManager panels(bot);
     net::co_spawn(co_await net::this_coro::executor, panels.runTicker(),
+                  net::detached);
+
+    // 红包账本 + 持久化任务队列：重启不丢，没领完的到期自动退款
+    auto ledger = std::make_shared<tgbot::RedPacketLedger>("red_packets.db");
+    tgbot::JobQueue jobs("jobs.db");
+    const tgbot::RefundHandler refund =
+        [](const tgbot::RedPacketRow& row) -> net::awaitable<std::string> {
+        // 接链上红包时：这里发起一笔转账，返回 tx hash 即可。
+        // 抛异常 = 本次失败，任务队列会退避重试，且不会重复退（账本状态机保证）
+        spdlog::info("红包 {} 过期，剩余 {} 分退回给 {}", row.id,
+                     row.remainingCents, row.creatorId);
+        co_return "local-refund:" + std::to_string(row.id);
+    };
+    net::co_spawn(co_await net::this_coro::executor,
+                  jobs.runWorker(
+                      tgbot::makeRedPacketJobHandler(*ledger, refund)),
                   net::detached);
 
     dispatcher.onCommand("start", [](tgbot::BotClient& bot,
@@ -140,15 +159,19 @@ net::awaitable<int> run(const std::string& token) {
     // 群红包：消息本身就是红包，抢到多少、谁抢的都在群里可见
     dispatcher.onCommand(
         "redpacket",
-        [&panels](tgbot::BotClient&, const json msg) -> net::awaitable<void> {
+        [&panels, ledger, &jobs](tgbot::BotClient&,
+                                 const json msg) -> net::awaitable<void> {
             const auto chatId = msg["chat"].value("id", std::int64_t{0});
-            tgbot::RedPacketPanel::Config cfg;
-            cfg.blessing = "恭喜发财，大吉大利";
-            cfg.totalCents = 10000;  // ¥100.00
-            cfg.totalCount = 5;
-            cfg.creatorId = msg["from"].value("id", std::int64_t{0});
+            tgbot::RedPacketSpec spec;
+            spec.chatId = chatId;
+            spec.creatorId = msg["from"].value("id", std::int64_t{0});
+            spec.totalCents = 10000;  // ¥100.00
+            spec.count = 5;
+            spec.ttl = std::chrono::seconds{3600};
+            // 落账 + 排一条"到期退款"任务（进程重启也还在）
+            const auto packetId = tgbot::createRedPacket(*ledger, jobs, spec);
             co_await panels.open(
-                chatId, std::make_shared<tgbot::RedPacketPanel>(cfg));
+                chatId, std::make_shared<tgbot::RedPacketPanel>(ledger, packetId));
         });
 
     // 所有操作台按钮统一走 "p:" 前缀

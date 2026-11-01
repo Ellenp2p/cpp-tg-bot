@@ -23,18 +23,17 @@ std::string formatMoney(std::int64_t cents) {
 
 }  // namespace
 
-RedPacketPanel::RedPacketPanel(Config config)
-    : config_(std::move(config)),
-      remainingCents_(config_.totalCents),
-      remainingCount_(std::max(1, config_.totalCount)),
-      deadline_(std::chrono::system_clock::now() + config_.ttl),
-      rng_(config_.seed != 0 ? config_.seed : std::random_device{}()) {}
+RedPacketPanel::RedPacketPanel(std::shared_ptr<RedPacketLedger> ledger,
+                               std::int64_t packetId, Options options)
+    : ledger_(std::move(ledger)),
+      packetId_(packetId),
+      options_(std::move(options)),
+      rng_(options_.seed != 0 ? options_.seed : std::random_device{}()) {}
 
 std::int64_t RedPacketPanel::split(std::int64_t remaining, int count) {
     if (count <= 1) {
         return remaining;  // 最后一份全给
     }
-    // 二倍均值：单份上限 = 剩余均值 × 2，避免有人独吞
     const auto maxPart = std::max<std::int64_t>(1, remaining * 2 / count);
     std::uniform_int_distribution<std::int64_t> dist(1, maxPart);
     const auto cap = remaining - (count - 1);  // 给后面每人至少留 1 分
@@ -45,39 +44,53 @@ PanelView RedPacketPanel::render() const {
     PanelView view;
     view.parseMode = ParseMode::kHtml;
 
-    std::string text = "🧧 <b>" + escapeHtml(config_.blessing) + "</b>\n\n";
-    text += "总金额：<b>¥" + formatMoney(config_.totalCents) + "</b>\n";
-
-    if (remainingCount_ <= 0 || remainingCents_ <= 0) {
-        text += "状态：<b>已抢完</b>（" + std::to_string(grabs_.size()) + "/" +
-                std::to_string(config_.totalCount) + "）\n";
-    } else if (expired_) {
-        text += "状态：<b>已过期</b>，剩余 ¥" + formatMoney(remainingCents_) +
-                " 未领取\n";
-    } else {
-        text += "剩余：<b>¥" + formatMoney(remainingCents_) + "</b>（" +
-                std::to_string(grabs_.size()) + "/" +
-                std::to_string(config_.totalCount) + " 已领取）\n";
+    const auto row = ledger_ ? ledger_->get(packetId_) : std::nullopt;
+    if (!row.has_value()) {
+        view.text = "这个红包不存在或已被删除。";
+        return view;
     }
 
-    if (config_.showList && !grabs_.empty()) {
+    const auto grabs = ledger_->grabs(packetId_);
+
+    std::string text = "🧧 <b>" + escapeHtml(options_.blessing) + "</b>\n\n";
+    text += "总金额：<b>¥" + formatMoney(row->totalCents) + "</b>\n";
+
+    if (row->state == "exhausted") {
+        text += "状态：<b>已抢完</b>（" + std::to_string(grabs.size()) + "/" +
+                std::to_string(row->totalCount) + "）\n";
+    } else if (row->state == "expired") {
+        text += "状态：<b>已过期</b>，剩余 ¥" +
+                formatMoney(row->remainingCents) + " 未领取\n";
+    } else if (row->state == "refunding" || row->state == "refunded") {
+        text += "状态：<b>已过期</b>，剩余 ¥" +
+                formatMoney(row->remainingCents) + " 已退回发起人\n";
+    } else {
+        text += "剩余：<b>¥" + formatMoney(row->remainingCents) + "</b>（" +
+                std::to_string(grabs.size()) + "/" +
+                std::to_string(row->totalCount) + " 已领取）\n";
+    }
+
+    if (options_.showList && !grabs.empty()) {
         text += "\n";
         constexpr std::size_t kMaxShown = 10;
-        for (std::size_t i = 0; i < grabs_.size() && i < kMaxShown; ++i) {
-            text += escapeHtml(grabs_[i].name) + "  ¥" +
-                    formatMoney(grabs_[i].cents) + "\n";
+        for (std::size_t i = 0; i < grabs.size() && i < kMaxShown; ++i) {
+            const auto& grab = grabs[i];
+            text += escapeHtml(grab.userName.empty()
+                                   ? "用户" + std::to_string(grab.userId)
+                                   : grab.userName) +
+                    "  ¥" + formatMoney(grab.cents) + "\n";
         }
-        if (grabs_.size() > kMaxShown) {
-            text += "…… 另有 " + std::to_string(grabs_.size() - kMaxShown) +
+        if (grabs.size() > kMaxShown) {
+            text += "…… 另有 " + std::to_string(grabs.size() - kMaxShown) +
                     " 人抢到\n";
         }
     }
 
     view.text = std::move(text);
-    if (remainingCount_ > 0 && remainingCents_ > 0 && !expired_) {
+    if (row->state == "open" && row->remainingCents > 0) {
         nlohmann::json rows = nlohmann::json::array();
         rows.push_back(nlohmann::json::array(
-            {{{"text", config_.grabLabel},
+            {{{"text", options_.grabLabel},
               {"callback_data", PanelManager::callbackData("grab")}}}));
         view.keyboard = {{"inline_keyboard", rows}};
     }
@@ -89,66 +102,65 @@ bool RedPacketPanel::onClick(const PanelEvent& event, PanelEffects& effects) {
         effects.answer = "未知操作";
         return false;
     }
-    if (remainingCount_ <= 0 || remainingCents_ <= 0) {
-        effects.answer = "手慢了，红包派完了";
+    const auto row = ledger_ ? ledger_->get(packetId_) : std::nullopt;
+    if (!row.has_value()) {
+        effects.answer = "红包不存在";
         return false;
     }
-    if (expired_) {
-        effects.answer = "红包已过期";
+    if (row->state != "open") {
+        effects.answer = "手慢了，红包派完了";
         return false;
     }
     if (event.userId == 0) {
         effects.answer = "拿不到你的用户信息";
         return false;
     }
-    if (!config_.creatorCanGrab && event.userId == config_.creatorId) {
+    if (!options_.creatorCanGrab && event.userId == row->creatorId) {
         effects.answer = "发起人不能抢自己的红包";
         effects.showAlert = true;
         return false;
     }
-    for (const auto& grab : grabs_) {
+
+    const auto grabs = ledger_->grabs(packetId_);
+    for (const auto& grab : grabs) {
         if (grab.userId == event.userId) {
             effects.answer = "你已经抢过了：¥" + formatMoney(grab.cents);
             return false;
         }
     }
 
-    const auto cents = split(remainingCents_, remainingCount_);
-    remainingCents_ -= cents;
-    --remainingCount_;
-    grabs_.push_back(Grab{event.userId,
-                          event.userName.empty()
-                              ? "用户" + std::to_string(event.userId)
-                              : event.userName,
-                          cents});
+    const auto cents = split(row->remainingCents, row->remainingCount);
+    const auto name = event.userName.empty()
+                          ? "用户" + std::to_string(event.userId)
+                          : event.userName;
+    if (!ledger_->grab(packetId_, event.userId, name, cents)) {
+        effects.answer = "手慢了，红包派完了";
+        return false;
+    }
 
     effects.answer = "抢到 ¥" + formatMoney(cents) + " 🎉";
     return true;
 }
 
-std::int64_t RedPacketPanel::grabbedCents(std::int64_t userId) const {
-    for (const auto& grab : grabs_) {
-        if (grab.userId == userId) {
-            return grab.cents;
-        }
-    }
-    return 0;
-}
-
 std::optional<std::chrono::system_clock::time_point>
 RedPacketPanel::deadline() const {
-    if (remainingCount_ <= 0 || remainingCents_ <= 0 || expired_) {
+    const auto row = ledger_ ? ledger_->get(packetId_) : std::nullopt;
+    if (!row.has_value() || row->state != "open") {
         return std::nullopt;
     }
-    return deadline_;
+    return std::chrono::system_clock::time_point{
+        std::chrono::seconds{row->expiresAt}};
 }
 
-void RedPacketPanel::onDeadline(PanelEffects& effects) {
-    if (remainingCount_ <= 0 || remainingCents_ <= 0) {
-        return;
+void RedPacketPanel::onDeadline(PanelEffects& /*effects*/) {
+    if (ledger_) {
+        ledger_->markExpired(packetId_);
     }
-    expired_ = true;
-    (void)effects;  // 过期只在原地改消息，不额外发通知
+}
+
+bool RedPacketPanel::finished() const {
+    const auto row = ledger_ ? ledger_->get(packetId_) : std::nullopt;
+    return !row.has_value() || row->state != "open";
 }
 
 }  // namespace tgbot

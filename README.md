@@ -273,6 +273,43 @@ co_await panels.open(chatId, std::make_shared<tgbot::RedPacketPanel>(cfg));
 （`Panel::type()` 已预留）。`sendEphemeralMessage` 目前不带 `parse_mode`，
 所以私密消息用纯文本。
 
+### 没领完的红包怎么退（持久化任务队列）
+
+"钱"不能只活在内存里，否则进程一重启就丢。框架给了两块持久化设施：
+
+| 组件 | 作用 |
+|---|---|
+| `RedPacketLedger` | 账本：总额/剩余/每笔领取。领取是带条件的原子 UPDATE，不可能超发 |
+| `JobQueue` | 持久化任务队列：延迟执行、失败指数退避重试、超限进死信 |
+
+流程：
+
+1. `createRedPacket()` 落账，并向任务队列排一条 `red_packet_refund`，`run_at = 到期时刻`
+2. 到期后 worker 领任务 → `beginRefund()` 抢退款权（状态机 `open/expired → refunding`，**只会成功一次**）
+3. 调你的 `RefundHandler`：今天可以只是记账；接链上就是"发一笔转账，返回 tx hash"
+4. `finishRefund()` 落状态和外部凭据
+
+```cpp
+auto ledger = std::make_shared<tgbot::RedPacketLedger>("red_packets.db");
+tgbot::JobQueue jobs("jobs.db");
+
+const tgbot::RefundHandler refund =
+    [](const tgbot::RedPacketRow& row) -> net::awaitable<std::string> {
+    // 抛异常 = 本次失败，队列自动退避重试
+    co_await chain.transfer(row.creatorId, row.remainingCents);
+    co_return txHash;
+};
+net::co_spawn(ex, jobs.runWorker(
+        tgbot::makeRedPacketJobHandler(*ledger, refund)), net::detached);
+```
+
+为什么这套接链上是安全的：
+
+- **任务落库**：重启后照样会退款，不会出现"钱卡在机器人里"
+- **幂等**：`key` 唯一 + 账本状态机，重试不会重复打款（双花）
+- **可对账**：`tx_ref` 记下 tx hash，崩溃后能追
+- **不静默丢**：退不动的任务进 `dead` 死信，有 `countDead()` 可以告警
+
 ## 测试
 
 自带一组不依赖网络的单元测试（CTest，不需要第三方测试框架）：
