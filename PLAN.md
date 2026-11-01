@@ -163,3 +163,49 @@ M1 → M2 → M3（此时已是一个可跑的 Bot）
 - 首次 push 的 include 目录层级错误（头文件少了 `tgbot/` 子目录）导致
   三平台编译失败；修复后 deps CI 全绿，三平台 bincache 资产齐备
 - 实测：命中 bincache 时构建 ~1.5 分钟（原全量 ~6-10 分钟）
+
+## 7. M10 稳定性修复记录（2026-10-31）
+
+> 说明：本文档 §1–§5 是最初的设计稿，目录结构/里程碑编号已与现状不符，
+> 现行状态以 README 为准；本节只记录这一轮"代码审查 → 修复"的内容。
+
+**已修（按影响排序）**
+1. `tg_bot.offset` 原子写：`std::rename` 在 Windows 上目标存在时直接失败，
+   导致 offset 从第二次写开始永远不更新（本机 MSVC 已复现）→ 改用
+   `std::filesystem::rename` + `fflush`/`fsync`/`_commit`。
+2. CA 证书：编译期绝对路径在发布机上必然不存在，Windows/macOS 会退化成
+   空信任库 → 改为 `SSL_CERT_FILE` → exe 同目录 → CWD → 编译期路径，
+   找不到时打 error。
+3. `getUpdates` 409：残留 webhook 是主因，但日志一直说"另一个进程" →
+   自动 `deleteWebhook` 后重试，并区分两种 409。
+4. offset 语义：代码一直"启动清空积压"，README 一直写"重启不丢消息" →
+   提炼成 `LongPollOptions::dropPendingUpdates`（默认保持旧行为）+ 文档同步。
+5. 退出码：启动失败也 return 0 → `run()` 返回 int，失败/永久错误（401/403/404）
+   退出码 1；错 token 不再无限重试（只针对 getUpdates，handler 里的 403 仅记
+   日志；想一直重试用 `LongPollOptions::permanentErrorPolicy = kRetryForever`）。
+6. 限速器：先等后占 → 先占后等（突发时 N 个协程同时发送的问题）。
+7. webhook 生命周期：`ssl::context*` / `ChatStrands&` 被 detached 协程裸引用 →
+   `shared_ptr` 按值捕获；`path` 改由上层持有。
+8. 连接池：进程级静态对象晚于 io_context 析构 → `clearIdlePool()`，
+   `BotClient` 析构时清空；池按 host 分键。
+9. 写操作重试：`sendMessage` 等非幂等调用在网络错误后重试会造成重复消息 →
+   `RetryPolicy::kNoTransportRetry`（只重试 429）。
+10. `catch` 类型：`use_awaitable` 抛 `boost::system::system_error`，不是
+    `beast::system_error`；原来的连接复用重试是死代码，webhook 还会把正常
+    断连刷成 warn。
+11. 示例业务：`/silent on` 空快照会导致 `/silent off` 把群权限全置 false
+    （永久锁群）→ 空快照直接拒绝 + 先落库快照再禁言；白名单权限补齐
+    `can_send_*`；`/silent list` 收归管理员；delay 读取夹取范围；
+    callback 没有 `message` 字段时不再抛异常。
+12. 工程卫生：`dist2/`、`tg_bot.offset*` 移出版本库并补 `.gitignore`；
+    `TGBOT_STATIC` 改为按 triplet 自动推断（带 musl 才开，glibc + 动态
+    triplet 加 -static 必链接失败）；CI 静态链接检查改成 `readelf` 硬失败；
+    release 改为单 publish job（避免三 job 并发建 release）。
+
+**留待有工具链时再做**
+- HTTP 层超时：`ssl::stream<beast::tcp_stream>` + `expires_after`，
+  当前 resolve/connect/handshake/read 没有 deadline，一次黑洞连接会让机器人
+  静默假死（这是目前最大的剩余风险）。
+- Bot API 改 POST：长文本/大键盘用 GET + query 会撞 URL 长度上限。
+- `vcpkg.json` 加 `builtin-baseline`，让依赖版本不再随 vcpkg HEAD 漂移。
+- 单元测试：限速器时间槽、`Dispatcher` 命令解析/前缀匹配、webhook 校验。

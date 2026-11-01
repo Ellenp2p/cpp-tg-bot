@@ -33,6 +33,8 @@ jobs:
     name: release (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
     container: ${{ matrix.container }}
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
     strategy:
       fail-fast: false
       matrix:
@@ -187,10 +189,30 @@ jobs:
           done
           ls -la dist/
 
+      # 产物统一交给下面的 publish job 上传：三个矩阵 job 并行创建/更新同一个
+      # release 会偶发 422，资产也会互相覆盖
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.artifact }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: publish release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.meta.outputs.tag }}
-          name: ${{ steps.meta.outputs.tag }}
+          tag_name: ${{ needs.build.outputs.tag }}
+          name: ${{ needs.build.outputs.tag }}
           files: dist/*
           generate_release_notes: true
