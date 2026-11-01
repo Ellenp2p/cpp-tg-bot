@@ -1,6 +1,9 @@
 #include <tgbot/bot_client.hpp>
 #include <tgbot/dispatcher.hpp>
 #include <tgbot/long_poll.hpp>
+#include <tgbot/rich_text.hpp>
+#include <tgbot/stream_message.hpp>
+#include <tgbot/util.hpp>
 
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
@@ -45,6 +48,8 @@ net::awaitable<int> run(const std::string& token) {
     const std::vector<tgbot::BotCommand> commands{
         {"start", "开始使用", false},
         {"inline", "inline 键盘演示", false},
+        {"rich", "富文本渲染演示", false},
+        {"stream", "流式输出演示", false},
     };
     try {
         co_await bot.setMyCommands(commands);
@@ -73,6 +78,40 @@ net::awaitable<int> run(const std::string& token) {
             co_await bot.sendMessage(chatId, "You said: " + text);
         }
     });
+
+    // 富文本：Bot API 的 parse_mode（HTML 最省心，只需转义 & < >）
+    dispatcher.onCommand(
+        "rich", [](tgbot::BotClient& bot, const json msg) -> net::awaitable<void> {
+            const auto chatId = msg["chat"].value("id", std::int64_t{0});
+            tgbot::SendOptions send;
+            send.parseMode = tgbot::ParseMode::kHtml;
+            send.disableWebPagePreview = true;
+            const std::string text =
+                "<b>粗体</b> / <i>斜体</i> / <u>下划线</u> / <s>删除线</s>\n"
+                "<code>inline code</code>\n"
+                "<pre><code class=\"language-cpp\">int main() { return 0; }</code></pre>\n"
+                "<blockquote>引用块</blockquote>\n"
+                "<span class=\"tg-spoiler\">剧透（点一下才显示）</span>\n"
+                "链接：<a href=\"https://core.telegram.org/bots/api\">Bot API</a>\n"
+                "转义示例：&lt;tag&gt; &amp; 100%";
+            co_await bot.sendMessage(chatId, text, send);
+        });
+
+    // 流式输出：先发占位，再按节流反复 editMessageText
+    dispatcher.onCommand(
+        "stream", [](tgbot::BotClient& bot, const json msg) -> net::awaitable<void> {
+            const auto chatId = msg["chat"].value("id", std::int64_t{0});
+            tgbot::StreamMessage stream(bot);
+            co_await stream.begin(chatId);
+            const char* chunks[] = {"正在",   "生成",   "一段", "流式",   "文本",
+                                    "……",     "每",     "200ms", "推送",  "一次，",
+                                    "但只有", "满足节流", "才会", "真正", "编辑消息。"};
+            for (const char* c : chunks) {
+                co_await stream.append(c);
+                co_await tgbot::co_sleep(std::chrono::milliseconds{200});
+            }
+            co_await stream.finish();
+        });
 
     // inline 键盘演示：/inline 出按钮，点击回 pong 气泡
     dispatcher.onCommand("inline", [](tgbot::BotClient& bot,
