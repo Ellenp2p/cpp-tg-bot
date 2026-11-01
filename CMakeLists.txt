@@ -34,6 +34,7 @@ add_library(tgbot STATIC
     src/lottery_panel.cpp
     src/panel.cpp
     src/rate_limiter.cpp
+    src/red_packet_panel.cpp
     src/rich_text.cpp
     src/sqlite_state_store.cpp
     src/stream_message.cpp

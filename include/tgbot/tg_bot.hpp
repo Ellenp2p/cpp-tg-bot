@@ -20,6 +20,7 @@
 #include <tgbot/long_poll.hpp>
 #include <tgbot/lottery_panel.hpp>
 #include <tgbot/panel.hpp>
+#include <tgbot/red_packet_panel.hpp>
 #include <tgbot/rich_text.hpp>
 #include <tgbot/state_store.hpp>
 #include <tgbot/stream_message.hpp>

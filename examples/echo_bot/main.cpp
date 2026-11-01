@@ -3,6 +3,7 @@
 #include <tgbot/long_poll.hpp>
 #include <tgbot/lottery_panel.hpp>
 #include <tgbot/panel.hpp>
+#include <tgbot/red_packet_panel.hpp>
 #include <tgbot/rich_text.hpp>
 #include <tgbot/stream_message.hpp>
 #include <tgbot/util.hpp>
@@ -53,6 +54,7 @@ net::awaitable<int> run(const std::string& token) {
         {"rich", "富文本渲染演示", false},
         {"stream", "流式输出演示", false},
         {"lottery", "发一个抽奖操作台（红包）", false},
+        {"redpacket", "在群里发一个红包，大家点按钮抢", false},
     };
     try {
         co_await bot.setMyCommands(commands);
@@ -133,6 +135,20 @@ net::awaitable<int> run(const std::string& token) {
             cfg.creatorId = msg["from"].value("id", std::int64_t{0});
             co_await panels.open(chatId,
                                  std::make_shared<tgbot::LotteryPanel>(cfg));
+        });
+
+    // 群红包：消息本身就是红包，抢到多少、谁抢的都在群里可见
+    dispatcher.onCommand(
+        "redpacket",
+        [&panels](tgbot::BotClient&, const json msg) -> net::awaitable<void> {
+            const auto chatId = msg["chat"].value("id", std::int64_t{0});
+            tgbot::RedPacketPanel::Config cfg;
+            cfg.blessing = "恭喜发财，大吉大利";
+            cfg.totalCents = 10000;  // ¥100.00
+            cfg.totalCount = 5;
+            cfg.creatorId = msg["from"].value("id", std::int64_t{0});
+            co_await panels.open(
+                chatId, std::make_shared<tgbot::RedPacketPanel>(cfg));
         });
 
     // 所有操作台按钮统一走 "p:" 前缀

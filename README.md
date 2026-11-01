@@ -234,8 +234,36 @@ cfg.duration = std::chrono::seconds{120};
 co_await panels.open(chatId, std::make_shared<tgbot::LotteryPanel>(cfg));
 ```
 
-内置的 `LotteryPanel` 覆盖了：参与去重、发起者限权开奖、到点自动开奖、
-中奖者收到"只有自己可见"的私密消息（专属红包码）。
+内置的 `LotteryPanel` 覆盖了：参与去重、发起者限权开奖、到点自动开奖。
+中奖名单**直接在群里公布**（`rewardPrivate=true` 时才会额外私聊发专属码）。
+
+### 群红包（`RedPacketPanel`）
+
+消息本身就是红包，抢到多少、谁抢的**全部在群里可见**，不需要去私聊找机器人：
+
+```text
+🧧 恭喜发财，大吉大利
+
+总金额：¥100.00
+剩余：¥62.45（3/5 已领取）
+
+@alice  ¥12.34
+@bob    ¥25.21
+@carol  ¥25.10
+```
+
+- 点「🧧 抢红包」当场分钱，消息原地刷新名单；抢完按钮自动消失
+- 金额用**整数分**计算（无浮点误差），分配走**二倍均值法**（和微信一致，避免有人独吞）
+- 发起人不能抢自己的；同一个人重复点不会重复领（还会告诉你上次抢了多少）
+- 默认 1 小时有效期，过期显示"已过期 + 未领取金额"，按钮同时消失
+
+```cpp
+tgbot::RedPacketPanel::Config cfg;
+cfg.totalCents = 10000;   // ¥100.00
+cfg.totalCount = 5;
+cfg.creatorId = msg["from"].value("id", std::int64_t{0});
+co_await panels.open(chatId, std::make_shared<tgbot::RedPacketPanel>(cfg));
+```
 
 **响应速度**：点击后先 `answerCallbackQuery`（客户端立刻停掉转圈），再编辑消息；
 同一个面板的点击由该聊天的 strand 串行处理，不会并发改同一条消息。

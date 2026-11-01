@@ -30,6 +30,9 @@ public:
         int winnerCount = 1;
         std::chrono::seconds duration{300};
         std::int64_t creatorId = 0;  // 0 表示谁都能开奖
+        // 中奖者是否额外收到一条"只有自己可见"的消息（专属码）。
+        // 默认关闭：中奖结果全部在群里公开，不需要去私聊找机器人。
+        bool rewardPrivate = false;
         // 中奖者的专属码；不设置则用内置生成器
         std::function<std::string(std::int64_t)> rewardCode;
     };

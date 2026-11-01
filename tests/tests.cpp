@@ -11,6 +11,7 @@
 #include <tgbot/lottery_panel.hpp>
 #include <tgbot/panel.hpp>
 #include <tgbot/rate_limiter.hpp>
+#include <tgbot/red_packet_panel.hpp>
 
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
@@ -282,6 +283,7 @@ void testLotteryPanel() {
     cfg.creatorId = 1;
     cfg.winnerCount = 1;
     cfg.duration = std::chrono::seconds{60};
+    cfg.rewardPrivate = true;  // 这个用例专门验证"私密发码"分支
     tgbot::LotteryPanel panel(cfg);
 
     tgbot::PanelEvent join;
@@ -340,6 +342,7 @@ void testLotteryPanel() {
     tgbot::LotteryPanel::Config autoCfg;
     autoCfg.duration = std::chrono::seconds{0};
     autoCfg.winnerCount = 3;
+    autoCfg.rewardPrivate = true;
     tgbot::LotteryPanel autoPanel(autoCfg);
     tgbot::PanelEffects autoFx;
     CHECK(autoPanel.onClick(join, autoFx));
@@ -348,6 +351,84 @@ void testLotteryPanel() {
     CHECK(autoPanel.closed());
     CHECK(autoPanel.winners().size() == 1);
     CHECK(autoFx.privateMessages.size() == 1);
+
+    // 默认（rewardPrivate=false）只在群里公布名单，不私下发码
+    tgbot::LotteryPanel::Config plainCfg;  // creatorId=0 → 谁都能开奖
+    tgbot::LotteryPanel plainPanel(plainCfg);
+    tgbot::PanelEffects plainFx;
+    CHECK(plainPanel.onClick(join, plainFx));
+    plainFx = {};
+    auto plainDraw = join;
+    plainDraw.action = "draw";
+    plainDraw.userId = 999;
+    CHECK(plainPanel.onClick(plainDraw, plainFx));
+    CHECK(!plainPanel.winners().empty());
+    CHECK(plainFx.privateMessages.empty());
+}
+
+void testRedPacketPanel() {
+    std::printf("test: red packet panel (群内可见)\n");
+
+    tgbot::RedPacketPanel::Config cfg;
+    cfg.totalCents = 10000;  // ¥100.00
+    cfg.totalCount = 5;
+    cfg.creatorId = 1;
+    cfg.seed = 12345;  // 固定随机数，保证可复现
+    tgbot::RedPacketPanel panel(cfg);
+
+    tgbot::PanelEvent ev;
+    ev.action = "grab";
+
+    // 发起人不能抢自己的红包
+    ev.userId = 1;
+    tgbot::PanelEffects fx;
+    CHECK(!panel.onClick(ev, fx));
+    CHECK(fx.showAlert);
+    CHECK(panel.grabberCount() == 0);
+
+    // 5 个人抢完：金额守恒、每人至少 1 分
+    std::int64_t sum = 0;
+    for (int i = 0; i < 5; ++i) {
+        ev.userId = 100 + i;
+        ev.userName = "@user" + std::to_string(i);
+        fx = {};
+        CHECK(panel.onClick(ev, fx));
+        CHECK(fx.answer.find("抢到") != std::string::npos);
+        const auto got = panel.grabbedCents(100 + i);
+        CHECK(got >= 1);
+        sum += got;
+    }
+    CHECK(sum == cfg.totalCents);
+    CHECK(panel.finished());
+    CHECK(panel.remainingCents() == 0);
+    CHECK(panel.remainingCount() == 0);
+
+    // 抢完之后再来的人
+    ev.userId = 999;
+    fx = {};
+    CHECK(!panel.onClick(ev, fx));
+    CHECK(fx.answer.find("手慢了") != std::string::npos);
+
+    // 群里看到的就是名单，且按钮消失
+    const auto view = panel.render();
+    CHECK(view.text.find("已抢完") != std::string::npos);
+    CHECK(view.text.find("@user0") != std::string::npos);
+    CHECK(view.keyboard.is_null());
+
+    // 同一个人重复抢：金额不变、人数不变
+    tgbot::RedPacketPanel::Config cfg2;
+    cfg2.totalCents = 500;
+    cfg2.totalCount = 2;
+    cfg2.seed = 7;
+    tgbot::RedPacketPanel repeat(cfg2);
+    ev.userId = 42;
+    fx = {};
+    CHECK(repeat.onClick(ev, fx));
+    const auto first = repeat.grabbedCents(42);
+    fx = {};
+    CHECK(!repeat.onClick(ev, fx));
+    CHECK(repeat.grabbedCents(42) == first);
+    CHECK(repeat.grabberCount() == 1);
 }
 
 }  // namespace
@@ -359,6 +440,7 @@ int main() {
     testPermanentErrorClassifier();
     testRichText();
     testLotteryPanel();
+    testRedPacketPanel();
 
     std::printf("\n%d checks, %d failed\n", g_checks, g_failed);
     return g_failed == 0 ? 0 : 1;
