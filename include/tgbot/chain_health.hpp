@@ -37,7 +37,10 @@ public:
         std::chrono::seconds pausedProbe{60};    // 挂了之后多久探一次
     };
 
-    explicit ChainMonitor(Options options = {});
+    // 注意：不能写 Options options = {}——GCC/clang 不允许用嵌套类型的
+    // 默认成员初始化器当默认实参（MSVC 会放过），所以拆成两个重载
+    ChainMonitor();
+    explicit ChainMonitor(Options options);
 
     void recordSuccess();
     void recordFailure(std::string_view error);
