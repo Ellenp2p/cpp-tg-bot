@@ -173,6 +173,41 @@ export TG_BOT_TOKEN=<你的token> && ./build/group_admin
 群里发 `/sticker on` 开启贴纸 60 秒自动过期，`/sticker off` 关闭
 （仅群管理员可开关，设置存 `group_admin_state.db`，SQLite 持久化，重启不丢）。
 
+## 富文本与流式输出
+
+**富文本**走 Bot API 的 `parse_mode`，用 `SendOptions` 指定：
+
+```cpp
+tgbot::SendOptions so;
+so.parseMode = tgbot::ParseMode::kHtml;   // 或 kMarkdownV2
+so.disableWebPagePreview = true;
+co_await bot.sendMessage(chatId, "<b>粗体</b> 和 <code>代码</code>", so);
+```
+
+程序拼接内容**优先用 HTML**：只需转义 `& < >`（`tgbot::escapeHtml`）；
+MarkdownV2 有 18 个元字符要转义（`tgbot::escapeMarkdownV2`），漏一个整条消息就 400。
+
+单条消息上限 4096 字符，`tgbot::splitMessage` 负责切块：优先在换行/空格处断开，
+不切断 UTF-8 多字节字符，HTML 模式下还会自动补闭合标签、下一段重新打开。
+
+**流式输出**（Telegram 没有流，只能发一条再反复编辑）：
+
+```cpp
+tgbot::StreamMessage stream(bot);
+co_await stream.begin(chatId);                 // 先发占位（带光标 ▍）
+while (auto delta = provider.next()) {
+    co_await stream.append(delta);             // 想多快就多快，内部自动节流
+}
+co_await stream.finish();                      // 去掉光标、做最终渲染
+```
+
+内部处理了四个坑：编辑节流（默认 1.2s，Telegram 编辑有频率限制）、
+内容未变化时不发（否则 400 `message is not modified`）、消息被删/不可编辑时
+自动停止且不打断生成、超过 4096 字符时冻结当前消息并在收尾时分条续发。
+
+`examples/echo_bot` 里有现成演示：`/rich` 展示各种 HTML 标签，
+`/stream` 模拟逐段生成。
+
 ## 测试
 
 自带一组不依赖网络的单元测试（CTest，不需要第三方测试框架）：
