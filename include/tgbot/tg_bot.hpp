@@ -17,6 +17,7 @@
 
 #include <tgbot/amount.hpp>
 #include <tgbot/bot_client.hpp>
+#include <tgbot/chain_health.hpp>
 #include <tgbot/dispatcher.hpp>
 #include <tgbot/job_queue.hpp>
 #include <tgbot/long_poll.hpp>
@@ -26,6 +27,7 @@
 #include <tgbot/red_packet_ledger.hpp>
 #include <tgbot/red_packet_panel.hpp>
 #include <tgbot/red_packet_service.hpp>
+#include <tgbot/reconciliation.hpp>
 #include <tgbot/rich_text.hpp>
 #include <tgbot/state_store.hpp>
 #include <tgbot/stream_message.hpp>

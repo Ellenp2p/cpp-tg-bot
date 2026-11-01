@@ -337,6 +337,40 @@ wei->toString();                                // "1000000000000000000"
 - **可对账**：`tx_ref` 记下 tx hash，崩溃后能追
 - **不静默丢**：退不动的任务进 `dead` 死信，有 `countDead()` 可以告警
 
+### 对账与熔断（接链必备）
+
+**对账**补的是"广播成功但进程崩了"的窗口：
+
+- `TxRefRecorder`：拿到 tx hash 的**第一时间**就写进 `tx_ref`，别等确认
+- `Reconciler` 每 60 秒扫一遍卡在 `refunding` 的红包，按 hash 回查链：
+
+| 链上结果 | 动作 |
+|---|---|
+| `confirmed` | 标记 `refunded`（钱其实已经退了，绝不重发）|
+| `failed` | 退回 `expired`，重新排队 |
+| `not_found` | 短期 → 重排；超过 `stuckAfterSeconds` → 标 `stuck` + 告警 |
+| `pending` | 下一轮再看 |
+| 探测抛异常 | 熔断计数 +1、告警、本轮中止 |
+
+**熔断**：`ChainMonitor` 连续 5 次失败 → `paused`，此时 `flush()` 直接拒绝执行，
+避免 RPC 挂掉时疯狂重试把队列打爆；对账探测成功一次就自动恢复。
+
+**重试天花板**：单笔退款超过 `maxAttempts`（默认 5）→ 标 `stuck` + 告警，
+不再自动重试，等人确认链上到底发生了什么。
+
+```cpp
+tgbot::ChainMonitor chain;
+tgbot::RefundService refunds(*ledger, chain, opts, alert);
+tgbot::Reconciler reconciler(*ledger, chain, tgbot::Reconciler::Options{});
+
+// 每 60 秒对一次账
+co_await reconciler.run(
+    [](std::string_view txHash) -> net::awaitable<tgbot::ChainTxStatus> {
+        co_return co_await chain.rpc.txStatus(txHash);  // confirmed/failed/pending
+    },
+    alert);
+```
+
 ## 测试
 
 自带一组不依赖网络的单元测试（CTest，不需要第三方测试框架）：
