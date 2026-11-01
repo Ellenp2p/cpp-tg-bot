@@ -36,11 +36,18 @@ net::awaitable<int> run(const std::string& token) {
     }
 
     // 设置客户端命令菜单，失败不阻断启动
+    //
+    // 注意：不要把 std::vector 临时对象直接塞进 co_await 的操作数
+    // （co_await bot.setMyCommands(std::vector<...>{...})）——GCC 14 在 -O3 下
+    // 会对"co_await 操作数里的临时 initializer_list 容器"报
+    // internal compiler error: in gimple_add_tmp_var, at gimplify.cc:802，
+    // musl 静态构建（CI linux-static）就是这么挂的。先落具名变量即可。
+    const std::vector<tgbot::BotCommand> commands{
+        {"start", "开始使用", false},
+        {"inline", "inline 键盘演示", false},
+    };
     try {
-        co_await bot.setMyCommands(std::vector<tgbot::BotCommand>{
-            {"start", "开始使用", false},
-            {"inline", "inline 键盘演示", false},
-        });
+        co_await bot.setMyCommands(commands);
     } catch (const std::exception& e) {
         spdlog::warn("setMyCommands failed: {}", e.what());
     }

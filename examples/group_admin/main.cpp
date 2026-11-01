@@ -447,17 +447,24 @@ net::awaitable<int> run(const std::string& token) {
     }
 
     // 设置客户端命令菜单，失败不阻断启动
+    //
+    // 注意：不要把 std::vector 临时对象直接塞进 co_await 的操作数
+    // （co_await bot.setMyCommands(std::vector<...>{...})）——GCC 14 在 -O3 下
+    // 会对"co_await 操作数里的临时 initializer_list 容器"报
+    // internal compiler error: in gimple_add_tmp_var, at gimplify.cc:802，
+    // musl 静态构建（CI linux-static）就是这么挂的。先落具名变量即可。
+    const std::vector<tgbot::BotCommand> commands{
+        {"start", "开始使用 / 功能介绍", false},
+        {"help", "这个机器人能做什么", false},
+        {"sticker", "贴纸自动删除：on/off/delay/无参数查状态", false},
+        {"welcome", "新成员欢迎：on/off/set <文案>/reset/查状态（群管理员）", false},
+        {"silent", "静默模式：全员禁言 on/off/allow/deny/list（群管理员）", false},
+        {"card", "发福利卡片，点按钮领你的专属码（仅你可见）", false},
+        {"eph", "给自己发一条仅你可见的消息", false},
+        {"myid", "查你的用户 ID（隐身命令，别人看不到）", true},
+    };
     try {
-        co_await bot.setMyCommands(std::vector<tgbot::BotCommand>{
-            {"start", "开始使用 / 功能介绍", false},
-            {"help", "这个机器人能做什么", false},
-            {"sticker", "贴纸自动删除：on/off/delay/无参数查状态", false},
-            {"welcome", "新成员欢迎：on/off/set <文案>/reset/查状态（群管理员）", false},
-            {"silent", "静默模式：全员禁言 on/off/allow/deny/list（群管理员）", false},
-            {"card", "发福利卡片，点按钮领你的专属码（仅你可见）", false},
-            {"eph", "给自己发一条仅你可见的消息", false},
-            {"myid", "查你的用户 ID（隐身命令，别人看不到）", true},
-        });
+        co_await bot.setMyCommands(commands);
     } catch (const std::exception& e) {
         spdlog::warn("setMyCommands failed: {}", e.what());
     }
