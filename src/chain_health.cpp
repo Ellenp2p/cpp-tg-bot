@@ -18,6 +18,8 @@ std::string_view toString(ChainTxStatus status) {
     return "unknown";
 }
 
+ChainMonitor::ChainMonitor() : ChainMonitor(Options{}) {}
+
 ChainMonitor::ChainMonitor(Options options) : options_(options) {}
 
 void ChainMonitor::recordSuccess() {
