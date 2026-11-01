@@ -273,34 +273,61 @@ co_await panels.open(chatId, std::make_shared<tgbot::RedPacketPanel>(cfg));
 （`Panel::type()` 已预留）。`sendEphemeralMessage` 目前不带 `parse_mode`，
 所以私密消息用纯文本。
 
-### 没领完的红包怎么退（持久化任务队列）
+### 没领完的红包怎么退（持久化队列 + 批量退款）
 
-"钱"不能只活在内存里，否则进程一重启就丢。框架给了两块持久化设施：
+"钱"不能只活在内存里，否则进程一重启就丢。框架给了三块：
 
 | 组件 | 作用 |
 |---|---|
 | `RedPacketLedger` | 账本：总额/剩余/每笔领取。领取是带条件的原子 UPDATE，不可能超发 |
 | `JobQueue` | 持久化任务队列：延迟执行、失败指数退避重试、超限进死信 |
+| `RefundService` | 把"当前所有已到期"的红包合并成一批，一次 handler 调用退完 |
 
 流程：
 
-1. `createRedPacket()` 落账，并向任务队列排一条 `red_packet_refund`，`run_at = 到期时刻`
-2. 到期后 worker 领任务 → `beginRefund()` 抢退款权（状态机 `open/expired → refunding`，**只会成功一次**）
-3. 调你的 `RefundHandler`：今天可以只是记账；接链上就是"发一笔转账，返回 tx hash"
-4. `finishRefund()` 落状态和外部凭据
+1. `createRedPacket()` 落账 + 排一条 `red_packet_refund` 任务（`run_at = 到期时刻`）
+2. 到期后 worker 领任务 → `RefundService::flush()` 抓取**所有**可退红包
+3. 逐个 `beginRefund()` 抢退款权（`open/expired → refunding`，**只会成功一次**）
+4. 只调**一次** `BatchRefundHandler`，链上就是一次批量转账
+5. 成功的 `finishRefund()` 落 `refunded` + tx hash；失败的退回 `expired` 等下一轮
 
 ```cpp
 auto ledger = std::make_shared<tgbot::RedPacketLedger>("red_packets.db");
 tgbot::JobQueue jobs("jobs.db");
+tgbot::RefundService refunds(*ledger, tgbot::RefundService::Options{});  // decimals=18
 
-const tgbot::RefundHandler refund =
-    [](const tgbot::RedPacketRow& row) -> net::awaitable<std::string> {
-    // 抛异常 = 本次失败，队列自动退避重试
-    co_await chain.transfer(row.creatorId, row.remainingCents);
-    co_return txHash;
+const tgbot::BatchRefundHandler refund =
+    [](const tgbot::RefundBatch& batch) -> net::awaitable<tgbot::RefundBatchResult> {
+    co_await chain.payout(batch.items);   // 一次交易打给多个人（multisend）
+    tgbot::RefundBatchResult result;
+    result.ref = txHash;                  // 写回每个红包的 tx_ref
+    co_return result;                     // 抛异常 = 整批重试
 };
 net::co_spawn(ex, jobs.runWorker(
-        tgbot::makeRedPacketJobHandler(*ledger, refund)), net::detached);
+    [&](const tgbot::JobRecord& job) -> net::awaitable<void> {
+        co_await refunds.handleJob(job, refund);
+    }), net::detached);
+```
+
+**批量的意义**：每个红包都排了任务，但实际只会发生一次转账 —— 第一个任务把同批
+全处理掉，后面的任务发现状态已变直接空跑。`maxBatch` 控制单批上限；
+`failedPacketIds` 可以让个别失败的红包单独重试。
+
+### 金额为什么用 `Amount`（128 位）
+
+`int64` 存 wei 会溢出：
+
+```
+1 ETH     = 1 000 000 000 000 000 000 wei
+int64 上限 = 9 223 372 036 854 775 807   ≈ 9.22 ETH
+```
+
+`Amount` 是 128 位无符号（MSVC 没有 `__int128`，所以用两个 64 位 limb 手写），
+提供 `parse / toString / 加减 / mulSmall / divmod`，**溢出抛异常而不是静默回绕**：
+
+```cpp
+auto wei = tgbot::Amount::fromCents(100, 18);  // ¥1.00 → 1e18 wei
+wei->toString();                                // "1000000000000000000"
 ```
 
 为什么这套接链上是安全的：

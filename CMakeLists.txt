@@ -28,6 +28,7 @@ find_package(Threads REQUIRED)
 # ---- 框架库 ----
 add_library(tgbot STATIC
     src/http_client.cpp
+    src/amount.cpp
     src/bot_client.cpp
     src/dispatcher.cpp
     src/job_queue.cpp
@@ -35,6 +36,7 @@ add_library(tgbot STATIC
     src/lottery_panel.cpp
     src/panel.cpp
     src/rate_limiter.cpp
+    src/red_packet_batch.cpp
     src/red_packet_ledger.cpp
     src/red_packet_panel.cpp
     src/red_packet_service.cpp

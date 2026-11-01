@@ -12,6 +12,8 @@
 #include <tgbot/lottery_panel.hpp>
 #include <tgbot/panel.hpp>
 #include <tgbot/rate_limiter.hpp>
+#include <tgbot/amount.hpp>
+#include <tgbot/red_packet_batch.hpp>
 #include <tgbot/red_packet_ledger.hpp>
 #include <tgbot/red_packet_panel.hpp>
 
@@ -501,8 +503,150 @@ void testJobQueue() {
     CHECK(jobs.countPending() == 0);
 }
 
-}  // namespace
+void testAmount() {
+    std::printf("test: Amount（128 位，wei 级金额）\n");
 
+    const auto oneEth = tgbot::Amount::parse("1000000000000000000");
+    CHECK(oneEth.has_value());
+    CHECK(oneEth->toString() == "1000000000000000000");
+
+    // 1e19 wei 已经超过 int64（9.22e18），但还在 uint64 内
+    const auto overInt64 = tgbot::Amount::parse("10000000000000000000");
+    CHECK(overInt64.has_value());
+    CHECK(overInt64->fitsUint64());
+
+    // 2e19 连 uint64 都装不下，必须靠 128 位
+    const auto big = tgbot::Amount::parse("20000000000000000000");
+    CHECK(big.has_value());
+    CHECK(!big->fitsUint64());
+    CHECK(big->toString() == "20000000000000000000");
+
+    CHECK((*oneEth + *oneEth).toString() == "2000000000000000000");
+    CHECK((*big - *oneEth).toString() == "19000000000000000000");
+    CHECK(oneEth->mulSmall(3).toString() == "3000000000000000000");
+
+    // 拆分要用的除法
+    const auto [quotient, remainder] = oneEth->divmod(3);
+    CHECK(quotient.toString() == "333333333333333333");
+    CHECK(remainder == 1);
+
+    // 分 → 链上单位
+    const auto ethWei = tgbot::Amount::fromCents(100, 18);  // ¥1.00
+    CHECK(ethWei.has_value());
+    CHECK(ethWei->toString() == "1000000000000000000");
+    const auto usdt = tgbot::Amount::fromCents(100, 6);  // ¥1.00
+    CHECK(usdt.has_value());
+    CHECK(usdt->toString() == "1000000");
+
+    // 非法与溢出
+    CHECK(!tgbot::Amount::parse("").has_value());
+    CHECK(!tgbot::Amount::parse("12a").has_value());
+    CHECK(!tgbot::Amount::fromCents(100, 1).has_value());
+    // 2^128 正好溢出
+    CHECK(!tgbot::Amount::parse("340282366920938463463374607431768211456")
+               .has_value());
+
+    CHECK(*oneEth < *big);
+    CHECK(*oneEth != *big);
+    CHECK(*oneEth == *oneEth);
+}
+
+void testBatchRefund() {
+    std::printf("test: 批量退款（一批只调一次 handler）\n");
+
+    auto ledger = std::make_shared<tgbot::RedPacketLedger>(":memory:");
+    // ttl=0 → 立即到期
+    const auto a = ledger->create(-100, 1, 5000, 2, std::chrono::seconds{0});
+    const auto b = ledger->create(-100, 2, 3000, 2, std::chrono::seconds{0});
+    const auto c = ledger->create(-100, 3, 1000, 2, std::chrono::seconds{0});
+    CHECK(ledger->grab(a, 10, "@x", 1000));  // a 被抢走一部分
+
+    tgbot::RefundService service(*ledger, tgbot::RefundService::Options{});
+    int calls = 0;
+    std::vector<std::int64_t> seen;
+    std::size_t flushed = 0;
+    tgbot::Amount total;
+
+    const tgbot::BatchRefundHandler handler =
+        [&](const tgbot::RefundBatch& batch)
+        -> boost::asio::awaitable<tgbot::RefundBatchResult> {
+        ++calls;
+        total = batch.total();
+        for (const auto& item : batch.items) {
+            seen.push_back(item.packetId);
+        }
+        tgbot::RefundBatchResult result;
+        result.ref = "tx-" + batch.id;
+        co_return result;
+    };
+
+    boost::asio::io_context io;
+    boost::asio::co_spawn(
+        io,
+        [&]() -> boost::asio::awaitable<void> {
+            flushed = co_await service.flush(handler);
+        },
+        boost::asio::detached);
+    io.run();
+
+    CHECK(calls == 1);  // 三个红包合并成一次
+    CHECK(flushed == 3);
+    CHECK(seen.size() == 3);
+    CHECK(ledger->get(a)->state == "refunded");
+    CHECK(ledger->get(b)->state == "refunded");
+    CHECK(ledger->get(c)->state == "refunded");
+    CHECK(!ledger->get(a)->txRef.empty());
+    // 剩余 4000 + 3000 + 1000 = 8000 分 = 8e19 wei
+    CHECK(total.toString() == "80000000000000000000");
+
+    // 再冲一次：没有可退的了
+    calls = 0;
+    boost::asio::io_context io2;
+    boost::asio::co_spawn(
+        io2,
+        [&]() -> boost::asio::awaitable<void> {
+            flushed = co_await service.flush(handler);
+        },
+        boost::asio::detached);
+    io2.run();
+    CHECK(calls == 0);
+    CHECK(flushed == 0);
+
+    // 部分失败：失败那笔退回 expired，下一轮再退
+    const auto d = ledger->create(-100, 4, 2000, 2, std::chrono::seconds{0});
+    const auto e = ledger->create(-100, 5, 2000, 2, std::chrono::seconds{0});
+    const tgbot::BatchRefundHandler failing =
+        [&](const tgbot::RefundBatch& batch)
+        -> boost::asio::awaitable<tgbot::RefundBatchResult> {
+        (void)batch;
+        tgbot::RefundBatchResult result;
+        result.ref = "tx-partial";
+        result.failedPacketIds.push_back(e);
+        co_return result;
+    };
+    boost::asio::io_context io3;
+    boost::asio::co_spawn(
+        io3,
+        [&]() -> boost::asio::awaitable<void> {
+            co_await service.flush(failing);
+        },
+        boost::asio::detached);
+    io3.run();
+    CHECK(ledger->get(d)->state == "refunded");
+    CHECK(ledger->get(e)->state == "expired");
+
+    boost::asio::io_context io4;
+    boost::asio::co_spawn(
+        io4,
+        [&]() -> boost::asio::awaitable<void> {
+            co_await service.flush(handler);
+        },
+        boost::asio::detached);
+    io4.run();
+    CHECK(ledger->get(e)->state == "refunded");
+}
+
+}  // namespace
 int main() {
     std::setvbuf(stdout, nullptr, _IONBF, 0);
     testCommandParsing();
@@ -514,6 +658,8 @@ int main() {
     testRedPacketLedger();
     testRedPacketPanel();
     testJobQueue();
+    testAmount();
+    testBatchRefund();
 
     std::printf("\n%d checks, %d failed\n", g_checks, g_failed);
     return g_failed == 0 ? 0 : 1;

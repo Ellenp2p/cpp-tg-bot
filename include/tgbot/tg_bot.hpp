@@ -15,12 +15,14 @@
 // 注：SQLite 状态存储是可选后端（需要 sqlite3 依赖），不在本头里：
 //   #include <tgbot/sqlite_state_store.hpp>
 
+#include <tgbot/amount.hpp>
 #include <tgbot/bot_client.hpp>
 #include <tgbot/dispatcher.hpp>
 #include <tgbot/job_queue.hpp>
 #include <tgbot/long_poll.hpp>
 #include <tgbot/lottery_panel.hpp>
 #include <tgbot/panel.hpp>
+#include <tgbot/red_packet_batch.hpp>
 #include <tgbot/red_packet_ledger.hpp>
 #include <tgbot/red_packet_panel.hpp>
 #include <tgbot/red_packet_service.hpp>

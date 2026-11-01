@@ -4,6 +4,7 @@
 #include <tgbot/long_poll.hpp>
 #include <tgbot/lottery_panel.hpp>
 #include <tgbot/panel.hpp>
+#include <tgbot/red_packet_batch.hpp>
 #include <tgbot/red_packet_ledger.hpp>
 #include <tgbot/red_packet_panel.hpp>
 #include <tgbot/red_packet_service.hpp>
@@ -74,20 +75,28 @@ net::awaitable<int> run(const std::string& token) {
     net::co_spawn(co_await net::this_coro::executor, panels.runTicker(),
                   net::detached);
 
-    // 红包账本 + 持久化任务队列：重启不丢，没领完的到期自动退款
+    // 红包账本 + 持久化任务队列：重启不丢，没领完的到期批量退款
     auto ledger = std::make_shared<tgbot::RedPacketLedger>("red_packets.db");
     tgbot::JobQueue jobs("jobs.db");
-    const tgbot::RefundHandler refund =
-        [](const tgbot::RedPacketRow& row) -> net::awaitable<std::string> {
-        // 接链上红包时：这里发起一笔转账，返回 tx hash 即可。
-        // 抛异常 = 本次失败，任务队列会退避重试，且不会重复退（账本状态机保证）
-        spdlog::info("红包 {} 过期，剩余 {} 分退回给 {}", row.id,
-                     row.remainingCents, row.creatorId);
-        co_return "local-refund:" + std::to_string(row.id);
+    tgbot::RefundService refunds(*ledger, tgbot::RefundService::Options{});
+
+    const tgbot::BatchRefundHandler refund =
+        [](const tgbot::RefundBatch& batch) -> net::awaitable<tgbot::RefundBatchResult> {
+        // 一次调用处理一整批：链上就是一次批量转账（multisend / 合约 payout），
+        // 比逐笔发交易省 gas。抛异常 = 整批失败，任务队列会退避重试。
+        for (const auto& item : batch.items) {
+            spdlog::info("退款：红包 {} → 用户 {}，金额 {} wei", item.packetId,
+                         item.creatorId, item.amount.toString());
+        }
+        tgbot::RefundBatchResult result;
+        result.ref = "local-batch:" + batch.id;  // 接链上时换成 tx hash
+        co_return result;
     };
     net::co_spawn(co_await net::this_coro::executor,
-                  jobs.runWorker(
-                      tgbot::makeRedPacketJobHandler(*ledger, refund)),
+                  jobs.runWorker([&refunds, refund](const tgbot::JobRecord& job)
+                                     -> net::awaitable<void> {
+                      co_await refunds.handleJob(job, refund);
+                  }),
                   net::detached);
 
     dispatcher.onCommand("start", [](tgbot::BotClient& bot,
