@@ -15,6 +15,7 @@
 
 #include <spdlog/spdlog.h>
 
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
@@ -48,6 +49,11 @@ namespace ssl = net::ssl;
 namespace fs = std::filesystem;
 
 namespace {
+
+// 各阶段超时。读超时是按请求给的（长轮询需要 40s+），见 HttpRequest。
+constexpr auto kConnectTimeout = std::chrono::seconds{10};
+constexpr auto kHandshakeTimeout = std::chrono::seconds{15};
+constexpr auto kWriteTimeout = std::chrono::seconds{15};
 
 // ---- CA 证书定位 ----
 // 发布物是"exe + cacert.pem 放一起"，所以不能只认构建期写死的绝对路径：
@@ -141,15 +147,17 @@ ssl::context& tlsContext() {
     return ctx;
 }
 
+// 用 beast::tcp_stream 而不是裸 socket：它自带"下一次读写必须在这个时间内
+// 完成"的截止时间，黑洞连接不会再让请求无限挂起。
 struct Connection {
-    ssl::stream<net::ip::tcp::socket> stream;
+    ssl::stream<beast::tcp_stream> stream;
     beast::flat_buffer buffer;  // 读缓冲必须随连接复用，不能丢
 
     explicit Connection(const net::any_io_executor& ex)
         : stream(ex, tlsContext()) {}
     ~Connection() {
         boost::system::error_code ec;
-        stream.next_layer().close(ec);
+        stream.next_layer().socket().close(ec);
     }
     Connection(const Connection&) = delete;
     Connection& operator=(const Connection&) = delete;
@@ -164,24 +172,36 @@ std::map<std::string, std::vector<std::unique_ptr<Connection>>>& idlePool() {
     return pool;
 }
 
-net::awaitable<std::unique_ptr<Connection>> acquire(const std::string& host) {
+struct AcquiredConnection {
+    std::unique_ptr<Connection> conn;
+    bool fromPool = false;
+};
+
+net::awaitable<AcquiredConnection> acquire(const std::string& host) {
     auto executor = co_await net::this_coro::executor;
     // 检查到取出之间没有 co_await，单线程下原子
     if (auto& bucket = idlePool()[host]; !bucket.empty()) {
-        auto conn = std::move(bucket.back());
+        auto pooled = std::move(bucket.back());
         bucket.pop_back();
-        co_return conn;
+        co_return AcquiredConnection{std::move(pooled), true};
     }
+
     auto conn = std::make_unique<Connection>(executor);
     conn->stream.set_verify_callback(ssl::host_name_verification(host));
+
     net::ip::tcp::resolver resolver(executor);
     const auto endpoints =
         co_await resolver.async_resolve(host, "https", net::use_awaitable);
-    co_await net::async_connect(conn->stream.next_layer(), endpoints,
-                                net::use_awaitable);
+
+    // 连接与握手都设截止时间：DNS 之后的 TCP 黑洞是最常见的"假死"来源
+    conn->stream.next_layer().expires_after(kConnectTimeout);
+    co_await conn->stream.next_layer().async_connect(endpoints,
+                                                     net::use_awaitable);
+
+    conn->stream.next_layer().expires_after(kHandshakeTimeout);
     co_await conn->stream.async_handshake(ssl::stream_base::client,
                                           net::use_awaitable);
-    co_return conn;
+    co_return AcquiredConnection{std::move(conn), false};
 }
 
 void release(std::unique_ptr<Connection> conn, const std::string& host,
@@ -196,18 +216,28 @@ void release(std::unique_ptr<Connection> conn, const std::string& host,
 }
 
 // 单发请求（不做重试判定）：写请求 -> 读响应，异常原样上抛。
-// 独立成协程是为了让 httpsGet 里能用 try/catch 分类处理错误
+// 独立成协程是为了让 httpsRequest 里能用 try/catch 分类处理错误
 // （MSVC 不允许在 catch 块内 co_await，但 try 块内可以）。
-net::awaitable<HttpResponse> doGet(Connection& conn, const std::string& host,
-                                   const std::string& target) {
-    // HTTP/1.1 默认 keep-alive（不写 Connection: close）
-    http::request<http::string_body> req{http::verb::get, target, 11};
+net::awaitable<HttpResponse> doRequest(Connection& conn,
+                                       const std::string& host,
+                                       const HttpRequest& r) {
+    const auto verb =
+        r.method == HttpMethod::kPost ? http::verb::post : http::verb::get;
+    http::request<http::string_body> req{verb, r.target, 11};
     req.set(http::field::host, host);
-    req.set(http::field::user_agent, "cpp-tg-bot/0.2");
+    req.set(http::field::user_agent, "cpp-tg-bot/0.3");
+    if (r.method == HttpMethod::kPost) {
+        // 表单放在 body 里：长文本/大键盘不再受 URL 长度限制
+        req.set(http::field::content_type, r.contentType);
+        req.body() = r.body;
+        req.prepare_payload();
+    }
 
+    conn.stream.next_layer().expires_after(kWriteTimeout);
     co_await http::async_write(conn.stream, req, net::use_awaitable);
 
     http::response<http::string_body> res;
+    conn.stream.next_layer().expires_after(r.readTimeout);
     co_await http::async_read(conn.stream, conn.buffer, res,
                               net::use_awaitable);
 
@@ -215,39 +245,53 @@ net::awaitable<HttpResponse> doGet(Connection& conn, const std::string& host,
                            std::move(res.body()), res.keep_alive()};
 }
 
+bool isStaleConnectionCode(const boost::system::error_code& code) {
+    return code == net::error::eof || code == http::error::end_of_stream ||
+           code == http::error::partial_message ||
+           code == net::error::connection_reset ||
+           code == net::error::broken_pipe;
+}
+
 }  // namespace
 
 void clearIdlePool() { idlePool().clear(); }
 
-net::awaitable<HttpResponse> httpsGet(const std::string& host,
-                                      const std::string& target) {
+net::awaitable<HttpResponse> httpsRequest(const std::string& host,
+                                          const HttpRequest& request) {
     // 最多两次尝试：池化连接可能被服务端在空闲期静默断开（重用前无法感知），
     // 遇到这类错误就丢弃连接、换新重试一次。
     for (int attempt = 0; attempt < 2; ++attempt) {
-        auto conn = co_await acquire(host);
+        auto acquired = co_await acquire(host);
+        auto& conn = acquired.conn;
         try {
-            auto resp = co_await doGet(*conn, host, target);
+            auto resp = co_await doRequest(*conn, host, request);
             release(std::move(conn), host, resp.reusable);
             co_return resp;
         } catch (const boost::system::system_error& e) {
             // 注意：use_awaitable 抛的是 boost::system::system_error，
             // 不是 beast::system_error（后者只是它的派生类），捕窄了会漏。
             const auto code = e.code();
-            const bool staleConnection =
-                code == net::error::eof || code == http::error::end_of_stream ||
-                code == http::error::partial_message ||
-                code == net::error::connection_reset ||
-                code == net::error::broken_pipe ||
-                code == net::error::timed_out ||
-                code == beast::error::timeout;
-            if (!staleConnection) {
-                throw;
+            if (isStaleConnectionCode(code)) {
+                continue;  // conn 析构 → 关闭，下一轮换新连接
             }
-            // conn 在这里析构 → 关闭，不再回池；下一轮换新连接
+            // 读/写超时：只有"复用来的旧连接"值得换新重试；
+            // 新建连接就超时说明对端真的不响应，应当上抛
+            if (code == beast::error::timeout && acquired.fromPool) {
+                continue;
+            }
+            throw;
         }
     }
     throw std::runtime_error(
-        "httpsGet: 复用连接失效后换新连接仍然失败（服务端不可达？）");
+        "httpsRequest: 复用连接失效后换新连接仍然失败（服务端不可达？）");
+}
+
+net::awaitable<HttpResponse> httpsGet(const std::string& host,
+                                      const std::string& target) {
+    HttpRequest req;
+    req.method = HttpMethod::kGet;
+    req.target = target;
+    co_return co_await httpsRequest(host, req);
 }
 
 }  // namespace tgbot
