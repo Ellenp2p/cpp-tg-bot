@@ -17,7 +17,9 @@ namespace tgbot {
 struct WebhookConfig {
     std::string publicUrl;    // Telegram 投递地址，如 https://bot.example.com/hook
     std::string secretToken;  // 可选；非空则校验 X-Telegram-Bot-Api-Secret-Token
-    std::string host = "0.0.0.0";
+    // 监听地址。默认只监听回环：反代形态下明文端口不应该暴露在公网；
+    // 需要直连或容器内网暴露时显式设成 "0.0.0.0"
+    std::string host = "127.0.0.1";
     unsigned short port = 8080;
     std::string tlsCert;      // PEM 证书链（与 tlsKey 同时设置才启用 TLS）
     std::string tlsKey;       // PEM 私钥

@@ -11,17 +11,22 @@ namespace tgbot {
 namespace net = boost::asio;
 
 net::awaitable<void> RateLimiter::beforeSend(std::int64_t chatId) {
+    const auto executor = co_await net::this_coro::executor;
     const auto now = std::chrono::steady_clock::now();
-    // 全局槽位与该聊天的槽位取较晚者
-    const auto next = std::max({now, nextGlobalSend_, nextChatSend_[chatId]});
-    if (next > now) {
-        net::steady_timer timer(co_await net::this_coro::executor, next);
-        co_await timer.async_wait(net::use_awaitable);
-    }
-    // 醒后再取一次时间，避免等待期间被其他协程占掉的槽位重叠
-    const auto slot = std::max(std::chrono::steady_clock::now(), next);
+
+    // 顺序很关键：**先占槽位、再等待**。
+    // 如果先等再占，N 个并发协程会读到同一个 "下一个可用时刻"，然后同一瞬间
+    // 一起醒来、一起发送——同聊天 1 msg/s 与全局 30 msg/s 都会被成倍突破，
+    // 直接换来 Telegram 的 429。
+    const auto slot = std::max({now, nextGlobalSend_, nextChatSend_[chatId]});
     nextGlobalSend_ = slot + kGlobalInterval;
     nextChatSend_[chatId] = slot + kChatInterval;
+
+    if (slot > now) {
+        net::steady_timer timer(executor);
+        timer.expires_at(slot);
+        co_await timer.async_wait(net::use_awaitable);
+    }
 }
 
 }  // namespace tgbot

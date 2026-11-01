@@ -16,8 +16,12 @@
 #include <boost/asio/detached.hpp>
 #include <boost/asio/strand.hpp>
 
+#include <spdlog/spdlog.h>
+
 #include <cstdint>
+#include <exception>
 #include <map>
+#include <utility>
 
 namespace tgbot {
 namespace detail {
@@ -55,9 +59,22 @@ public:
                   Dispatcher& dispatcher) {
         const auto id = chatIdOf(update);
         auto& strand = strands_.try_emplace(id, executor_).first->second;
+        // 完成回调必须记录异常：detached 会静默吞掉，表现是"这条 update
+        // 莫名消失"，日志里什么都没有，排查时极其难受。
         boost::asio::co_spawn(
             strand, dispatcher.dispatch(update, bot),
-            boost::asio::detached);
+            [](std::exception_ptr e) {
+                if (!e) {
+                    return;
+                }
+                try {
+                    std::rethrow_exception(e);
+                } catch (const std::exception& ex) {
+                    spdlog::error("update dispatch failed: {}", ex.what());
+                } catch (...) {
+                    spdlog::error("update dispatch failed: unknown exception");
+                }
+            });
     }
 
 private:

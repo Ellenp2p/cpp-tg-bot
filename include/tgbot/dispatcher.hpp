@@ -23,6 +23,11 @@ public:
     // 按 callback_data 前缀注册，最长匹配者优先，如 "menu:"
     void onCallbackQuery(std::string dataPrefix, MessageHandler handler);
 
+    // 本 bot 的 username（getMe 拿到的那个，不带 @）。
+    // 设置后，群里 "/sticker@OtherBot on" 这类发给别的 bot 的命令会被忽略；
+    // 不设置则保持旧行为（任何 @后缀 都当成本 bot 处理）。
+    void setBotUsername(std::string username);
+
     boost::asio::awaitable<void> dispatch(nlohmann::json update,
                                           BotClient& bot);
 
@@ -30,6 +35,7 @@ private:
     std::map<std::string, MessageHandler> commands_;
     std::vector<MessageHandler> anyMessage_;
     std::map<std::string, MessageHandler> callbackQueries_;
+    std::string botUsername_;
 };
 
 }  // namespace tgbot

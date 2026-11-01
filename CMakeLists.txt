@@ -51,8 +51,10 @@ target_link_libraries(tgbot PUBLIC
 )
 
 # 源码是 UTF-8，MSVC 需要显式指定，否则中文/宽字符字符串字面量会乱码
+# /bigobj：webhook.cpp 的模板协程在 Debug(/Od) 下会触发 C1128（对象节数超限），
+# Release 不触发，但没人想"只有 Debug 编不过"
 if(MSVC)
-    target_compile_options(tgbot PUBLIC /utf-8)
+    target_compile_options(tgbot PUBLIC /utf-8 /bigobj)
 endif()
 
 # ---- CA 证书包 ----
@@ -74,8 +76,28 @@ if(EXISTS "${TGBOT_CACERT_PATH}")
 endif()
 
 # ---- Linux 全静态链接 ----
-option(TGBOT_STATIC "Link fully static binaries on Linux (musl recommended)" ON)
+# -static 能否成立，取决于依赖是不是静态库：
+#   * Alpine/musl + triplets/x64-linux-musl.cmake（VCPKG_LIBRARY_LINKAGE
+#     static）→ 拿到 .a，加 -static 产出"拷到任何 Linux 都能跑"的单文件；
+#   * 普通 glibc + vcpkg 默认 x64-linux（VCPKG_LIBRARY_LINKAGE dynamic）→
+#     拿到 .so，加 -static 会直接报 attempted static link of dynamic object。
+# 所以默认值按 triplet 自动推断，仍然可以用 -DTGBOT_STATIC=ON/OFF 强制覆盖。
+if(DEFINED TGBOT_STATIC)
+    set(_tgbot_static "${TGBOT_STATIC}")            # 命令行/缓存里显式指定，尊重它
+elseif(VCPKG_TARGET_TRIPLET MATCHES "musl")
+    set(_tgbot_static ON)
+else()
+    set(_tgbot_static OFF)
+endif()
+set(TGBOT_STATIC "${_tgbot_static}" CACHE BOOL
+    "Link fully static binaries on Linux (needs a static/musl triplet)")
+
 if(TGBOT_STATIC AND UNIX AND NOT APPLE)
+    if(NOT VCPKG_TARGET_TRIPLET MATCHES "musl|static")
+        message(WARNING
+            "TGBOT_STATIC=ON 但 triplet '${VCPKG_TARGET_TRIPLET}' 看起来是动态库，"
+            "链接大概率失败；请改用 musl/静态 triplet，或设 -DTGBOT_STATIC=OFF")
+    endif()
     target_link_options(tgbot PUBLIC -static -static-libgcc -static-libstdc++)
 endif()
 

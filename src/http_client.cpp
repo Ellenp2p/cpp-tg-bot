@@ -1,22 +1,43 @@
 #include <tgbot/http_client.hpp>
 
 #include <boost/asio/connect.hpp>
+#include <boost/asio/error.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/ssl.hpp>
 #include <boost/asio/ssl/host_name_verification.hpp>
 #include <boost/asio/this_coro.hpp>
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/beast/core.hpp>
+#include <boost/beast/core/error.hpp>
 #include <boost/beast/http.hpp>
 #include <boost/beast/ssl.hpp>
+#include <boost/system/system_error.hpp>
 
-#ifdef TB_CACERT_PEM
+#include <spdlog/spdlog.h>
+
+#include <cstdint>
+#include <cstdlib>
 #include <filesystem>
-#endif
-
+#include <iterator>
+#include <map>
 #include <memory>
 #include <stdexcept>
+#include <string>
+#include <utility>
 #include <vector>
+
+#if defined(_WIN32)
+// 只为了 GetModuleFileNameW；顺手压掉 windows.h 的 min/max 宏污染
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#elif defined(__APPLE__)
+#include <mach-o/dyld.h>
+#endif
 
 namespace tgbot {
 
@@ -24,8 +45,61 @@ namespace net = boost::asio;
 namespace beast = boost::beast;
 namespace http = beast::http;
 namespace ssl = net::ssl;
+namespace fs = std::filesystem;
 
 namespace {
+
+// ---- CA 证书定位 ----
+// 发布物是"exe + cacert.pem 放一起"，所以不能只认构建期写死的绝对路径：
+// 换台机器那个路径就不存在，Windows 上会静默退化成空信任库 → 所有握手失败。
+
+fs::path executableDirectory() {
+#if defined(_WIN32)
+    wchar_t buf[32768];
+    const DWORD n =
+        ::GetModuleFileNameW(nullptr, buf, static_cast<DWORD>(std::size(buf)));
+    if (n > 0 && n < std::size(buf)) {
+        return fs::path{buf}.parent_path();
+    }
+#elif defined(__linux__)
+    std::error_code ec;
+    const auto self = fs::read_symlink("/proc/self/exe", ec);
+    if (!ec && !self.empty()) {
+        return self.parent_path();
+    }
+#elif defined(__APPLE__)
+    char buf[4096];
+    std::uint32_t size = static_cast<std::uint32_t>(sizeof(buf));
+    if (::_NSGetExecutablePath(buf, &size) == 0) {
+        std::error_code ec;
+        const auto exe = fs::weakly_canonical(fs::path{buf}, ec);
+        if (!ec) {
+            return exe.parent_path();
+        }
+    }
+#endif
+    return {};
+}
+
+// 依次尝试：SSL_CERT_FILE → exe 同目录 → 工作目录 → 构建期路径
+std::vector<fs::path> caBundleCandidates() {
+    std::vector<fs::path> candidates;
+    if (const char* env = std::getenv("SSL_CERT_FILE");
+        env != nullptr && *env != '\0') {
+        candidates.emplace_back(env);
+    }
+    if (const auto dir = executableDirectory(); !dir.empty()) {
+        candidates.push_back(dir / "cacert.pem");
+    }
+    std::error_code ec;
+    if (const auto cwd = fs::current_path(ec); !ec && !cwd.empty()) {
+        candidates.push_back(cwd / "cacert.pem");
+    }
+#ifdef TB_CACERT_PEM
+    candidates.emplace_back(TB_CACERT_PEM);  // 构建目录（本地开发时直接用）
+#endif
+    return candidates;
+}
 
 // TLS 上下文整个进程共享一个（校验证书链 + 主机名，全部开启）。
 // 前提：只在单 io_context 单线程内使用。
@@ -33,17 +107,35 @@ ssl::context& tlsContext() {
     static ssl::context ctx = [] {
         ssl::context c(ssl::context::tls_client);
         c.set_options(ssl::context::default_workarounds |
-                      ssl::context::no_sslv2 |
-                      ssl::context::no_sslv3);
+                      ssl::context::no_sslv2 | ssl::context::no_sslv3);
         c.set_verify_mode(ssl::verify_peer);
+
+        // 系统 CA 库（Linux/macOS 通常可用；Windows 上一般拿不到东西）
         boost::system::error_code ec;
-        c.set_default_verify_paths(ec);  // Unix 系统 CA 库
-#ifdef TB_CACERT_PEM
-        std::error_code fs_ec;
-        if (std::filesystem::exists(TB_CACERT_PEM, fs_ec)) {
-            c.load_verify_file(TB_CACERT_PEM);  // Windows 等平台的兜底
+        c.set_default_verify_paths(ec);
+        bool loaded = !ec;
+
+        for (const auto& path : caBundleCandidates()) {
+            std::error_code fsEc;
+            if (!fs::is_regular_file(path, fsEc)) {
+                continue;
+            }
+            try {
+                c.load_verify_file(path.string());
+                spdlog::info("TLS CA bundle: {} (system CA: {})", path.string(),
+                             loaded ? "yes" : "no");
+                loaded = true;
+                break;
+            } catch (const std::exception& e) {
+                spdlog::warn("load CA bundle '{}' failed: {}", path.string(),
+                             e.what());
+            }
         }
-#endif
+        if (!loaded) {
+            spdlog::error(
+                "找不到任何 CA 证书，TLS 校验必然失败：请把 cacert.pem 放到"
+                "可执行文件同目录，或设置 SSL_CERT_FILE");
+        }
         return c;
     }();
     return ctx;
@@ -63,22 +155,21 @@ struct Connection {
     Connection& operator=(const Connection&) = delete;
 };
 
-constexpr std::size_t kMaxIdle = 8;  // 空闲连接池上限，防句柄堆积
+constexpr std::size_t kMaxIdlePerHost = 8;  // 每个 host 的空闲连接上限
 
-// 本项目只连 api.telegram.org 一个 host，池不按 host 分键；
-// 若将来多 host，把 vector 换成 map<host, vector<...>> 即可。
-std::vector<std::unique_ptr<Connection>>& idlePool() {
-    static std::vector<std::unique_ptr<Connection>> pool;
+// 按 host 分组的空闲连接池：不同 host 之间绝不共用连接——连接上绑定了
+// 建连时的 host_name_verification 回调，混用等于给别的 host 开了后门。
+std::map<std::string, std::vector<std::unique_ptr<Connection>>>& idlePool() {
+    static std::map<std::string, std::vector<std::unique_ptr<Connection>>> pool;
     return pool;
 }
 
 net::awaitable<std::unique_ptr<Connection>> acquire(const std::string& host) {
     auto executor = co_await net::this_coro::executor;
-    auto& pool = idlePool();
-    if (!pool.empty()) {
-        // 检查到取出之间没有 co_await，单线程下原子
-        auto conn = std::move(pool.back());
-        pool.pop_back();
+    // 检查到取出之间没有 co_await，单线程下原子
+    if (auto& bucket = idlePool()[host]; !bucket.empty()) {
+        auto conn = std::move(bucket.back());
+        bucket.pop_back();
         co_return conn;
     }
     auto conn = std::make_unique<Connection>(executor);
@@ -93,12 +184,15 @@ net::awaitable<std::unique_ptr<Connection>> acquire(const std::string& host) {
     co_return conn;
 }
 
-void release(std::unique_ptr<Connection> conn, bool reusable) {
-    auto& pool = idlePool();
-    if (reusable && pool.size() < kMaxIdle) {
-        pool.push_back(std::move(conn));
+void release(std::unique_ptr<Connection> conn, const std::string& host,
+             bool reusable) {
+    if (!conn || !reusable) {
+        return;  // unique_ptr 析构自动 close
     }
-    // 不可复用（对端关闭/出错）：unique_ptr 析构自动 close
+    auto& bucket = idlePool()[host];
+    if (bucket.size() < kMaxIdlePerHost) {
+        bucket.push_back(std::move(conn));
+    }
 }
 
 // 单发请求（不做重试判定）：写请求 -> 读响应，异常原样上抛。
@@ -109,7 +203,7 @@ net::awaitable<HttpResponse> doGet(Connection& conn, const std::string& host,
     // HTTP/1.1 默认 keep-alive（不写 Connection: close）
     http::request<http::string_body> req{http::verb::get, target, 11};
     req.set(http::field::host, host);
-    req.set(http::field::user_agent, "cpp-tg-bot/0.1");
+    req.set(http::field::user_agent, "cpp-tg-bot/0.2");
 
     co_await http::async_write(conn.stream, req, net::use_awaitable);
 
@@ -123,6 +217,8 @@ net::awaitable<HttpResponse> doGet(Connection& conn, const std::string& host,
 
 }  // namespace
 
+void clearIdlePool() { idlePool().clear(); }
+
 net::awaitable<HttpResponse> httpsGet(const std::string& host,
                                       const std::string& target) {
     // 最多两次尝试：池化连接可能被服务端在空闲期静默断开（重用前无法感知），
@@ -131,18 +227,27 @@ net::awaitable<HttpResponse> httpsGet(const std::string& host,
         auto conn = co_await acquire(host);
         try {
             auto resp = co_await doGet(*conn, host, target);
-            release(std::move(conn), resp.reusable);
+            release(std::move(conn), host, resp.reusable);
             co_return resp;
-        } catch (const beast::system_error& e) {
-            // 写失败 / 服务端提前关连接（空闲超时）：连接已废，换新重试
-            if (e.code() == http::error::end_of_stream ||
-                e.code() == net::error::operation_aborted) {
-                continue;
+        } catch (const boost::system::system_error& e) {
+            // 注意：use_awaitable 抛的是 boost::system::system_error，
+            // 不是 beast::system_error（后者只是它的派生类），捕窄了会漏。
+            const auto code = e.code();
+            const bool staleConnection =
+                code == net::error::eof || code == http::error::end_of_stream ||
+                code == http::error::partial_message ||
+                code == net::error::connection_reset ||
+                code == net::error::broken_pipe ||
+                code == net::error::timed_out ||
+                code == beast::error::timeout;
+            if (!staleConnection) {
+                throw;
             }
-            throw;
+            // conn 在这里析构 → 关闭，不再回池；下一轮换新连接
         }
     }
-    throw std::runtime_error("httpsGet: request failed on fresh connection");
+    throw std::runtime_error(
+        "httpsGet: 复用连接失效后换新连接仍然失败（服务端不可达？）");
 }
 
 }  // namespace tgbot

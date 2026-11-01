@@ -11,11 +11,13 @@
 //   webhookLoop  webhook 模式（Beast HTTP/1.1 服务端，TLS 可选，secret 校验，
 //                与长轮询共用 Dispatcher 和按 chat strand 串行语义）
 //   co_sleep     协程睡眠工具
+//
+// 注：SQLite 状态存储是可选后端（需要 sqlite3 依赖），不在本头里：
+//   #include <tgbot/sqlite_state_store.hpp>
 
 #include <tgbot/bot_client.hpp>
 #include <tgbot/dispatcher.hpp>
 #include <tgbot/long_poll.hpp>
-#include <tgbot/sqlite_state_store.hpp>
 #include <tgbot/state_store.hpp>
 #include <tgbot/util.hpp>
 #include <tgbot/webhook.hpp>

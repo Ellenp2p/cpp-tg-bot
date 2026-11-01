@@ -9,28 +9,34 @@
 
 #include <spdlog/spdlog.h>
 
-#include <atomic>
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <exception>
+#include <filesystem>
 #include <fstream>
-#include <map>
 #include <string>
+#include <system_error>
+#include <utility>
+
+#if defined(_WIN32)
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
 
 namespace tgbot {
 
 namespace net = boost::asio;
+namespace fs = std::filesystem;
 
 namespace {
 
-// ---- offset 持久化：重启后从上次确认的位置继续 ----
-// Telegram 只保留 24h 内的 update，重启最多重放窗口内未确认的，不会丢消息。
+// ---- offset 持久化 ----
 
-constexpr const char* kOffsetFile = "tg_bot.offset";
-
-std::int64_t loadOffset() {
-    std::ifstream in(kOffsetFile);
+std::int64_t loadOffset(const std::string& path) {
+    std::ifstream in(path);
     std::int64_t v = 0;
     if (in >> v && v >= 0) {
         return v;
@@ -38,44 +44,118 @@ std::int64_t loadOffset() {
     return 0;
 }
 
-void saveOffset(std::int64_t offset) {
-    // 原子写：先写临时文件再 rename，中途被杀也不会留下半截
-    const std::string tmp = std::string(kOffsetFile) + ".tmp";
-    {
-        std::ofstream out(tmp, std::ios::trunc);
-        if (!(out << offset << '\n')) {
-            return;
-        }
+// 原子写：写临时文件 → flush + fsync → rename 覆盖目标。
+//
+// 必须用 std::filesystem::rename：Windows CRT 的 std::rename 在目标文件已存在
+// 时直接失败（返回 -1），POSIX 才是覆盖语义。用 std::rename 的后果是
+// "第一次运行能写、之后永远不更新 offset"，而且会留下一堆 .tmp。
+bool saveOffset(const std::string& path, std::int64_t offset) {
+    const std::string tmp = path + ".tmp";
+    std::FILE* f = std::fopen(tmp.c_str(), "wb");
+    if (f == nullptr) {
+        spdlog::warn("open offset tmp '{}' failed", tmp);
+        return false;
     }
-    std::rename(tmp.c_str(), kOffsetFile);
+    const bool wrote = std::fprintf(f, "%lld\n",
+                                    static_cast<long long>(offset)) > 0;
+    std::fflush(f);
+#if defined(_WIN32)
+    ::_commit(::_fileno(f));
+#else
+    ::fsync(::fileno(f));
+#endif
+    std::fclose(f);
+    if (!wrote) {
+        spdlog::warn("write offset tmp '{}' failed", tmp);
+        return false;
+    }
+
+    std::error_code ec;
+    fs::rename(tmp, path, ec);
+    if (ec) {
+        spdlog::warn("rename offset '{}' -> '{}' failed: {}", tmp, path,
+                     ec.message());
+        return false;
+    }
+    return true;
 }
 
-}  // namespace
-
-net::awaitable<void> longPollLoop(BotClient& bot, Dispatcher& dispatcher,
-                                  const std::atomic<bool>* shuttingDown) {
-    const auto executor = co_await net::this_coro::executor;
-    std::int64_t offset = loadOffset();
-    if (offset > 0) {
-        spdlog::info("resuming from persisted offset {}", offset);
-    }
-
-    // 启动时丢弃停机期间积压的所有 updates（"停机即完全停止"语义）：
-    // 负 offset 拉取会忘记之前所有 updates，再确认掉最后一条即可清空队列。
-    // 重启后不补放旧消息；要求不丢消息的部署应改用 webhook。
-    try {
-        const auto last = co_await bot.getUpdates(-1, /*timeout=*/0);
-        if (!last.empty()) {
-            offset = last.back().value("update_id", std::int64_t{0}) + 1;
-            co_await bot.getUpdates(offset, /*timeout=*/0);  // 确认最后一条
-            saveOffset(offset);
-            spdlog::info("dropped pending updates, start from offset {}",
-                         offset);
+// 启动时清空积压：负 offset 拉取会忘记之前所有 updates，再确认掉最后一条
+// 即可清空队列。返回新的 offset；探测失败时回落到持久化的值。
+net::awaitable<std::int64_t> flushPendingUpdates(BotClient& bot,
+                                                 const LongPollOptions& opts,
+                                                 bool& webhookCleanupTried) {
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        nlohmann::json last;
+        bool ok = false;
+        bool conflict = false;
+        std::string err;
+        try {
+            last =
+                co_await bot.getUpdates(-1, /*timeout=*/0, opts.allowedUpdates);
+            ok = true;
+        } catch (const TelegramApiError& e) {
+            err = e.what();
+            conflict = (e.errorCode == 409);
+            // 永久错误（错 token 之类）默认直接上抛退出；配置成"一直重试"时
+            // 就当普通失败处理，回落到持久化 offset 后由主循环继续退避
+            if (isPermanentError(e.errorCode) &&
+                opts.permanentErrorPolicy ==
+                    LongPollOptions::PermanentErrorPolicy::kExit) {
+                throw;
+            }
+        } catch (const std::exception& e) {
+            err = e.what();
         }
-    } catch (const std::exception& e) {
-        spdlog::warn("flush pending updates failed: {}; use persisted offset",
-                     e.what());
+
+        if (ok) {
+            if (!last.is_array() || last.empty()) {
+                spdlog::info("no pending updates, start from offset 0");
+                co_return 0;
+            }
+            const auto next =
+                last.back().value("update_id", std::int64_t{0}) + 1;
+            co_await bot.getUpdates(next, /*timeout=*/0, opts.allowedUpdates);
+            saveOffset(opts.offsetFile, next);
+            spdlog::info("dropped pending updates, start from offset {}", next);
+            co_return next;
+        }
+
+        if (conflict && !webhookCleanupTried) {
+            // 长轮询与 webhook 互斥：之前用 webhook 模式跑过的话，这里会一直
+            // 409。先摘掉 webhook 再重试，否则用户只能看到"另一个进程在跑"
+            // 这种误导性提示，然后永远起不来。
+            webhookCleanupTried = true;
+            spdlog::warn(
+                "getUpdates 409 Conflict：检测到 webhook 仍在生效，"
+                "正在 deleteWebhook 后重试");
+            co_await bot.deleteWebhook(false);
+            continue;
+        }
+
+        spdlog::warn("flush pending updates failed: {}; 回落到持久化 offset",
+                     err);
+        break;
     }
+    co_return loadOffset(opts.offsetFile);
+}
+
+net::awaitable<void> longPollLoopImpl(BotClient& bot, Dispatcher& dispatcher,
+                                      LongPollOptions opts,
+                                      const std::atomic<bool>* shuttingDown) {
+    const auto executor = co_await net::this_coro::executor;
+
+    bool webhookCleanupTried = false;
+    std::int64_t offset = 0;
+    if (opts.dropPendingUpdates) {
+        offset = co_await flushPendingUpdates(bot, opts, webhookCleanupTried);
+    } else {
+        offset = loadOffset(opts.offsetFile);
+        if (offset > 0) {
+            spdlog::info("resuming from persisted offset {}", offset);
+        }
+    }
+
     // 指数退避：1s -> 2s -> 4s ... 封顶 30s，成功一次即重置
     auto backoff = std::chrono::seconds{1};
 
@@ -90,18 +170,50 @@ net::awaitable<void> longPollLoop(BotClient& bot, Dispatcher& dispatcher,
         std::string error;
         long errorCode = 0;
         try {
-            updates = co_await bot.getUpdates(offset, /*timeout=*/30);
+            updates = co_await bot.getUpdates(offset, opts.pollTimeoutSeconds,
+                                              opts.allowedUpdates);
         } catch (const TelegramApiError& e) {
             error = e.what();
             errorCode = e.errorCode;
         } catch (const std::exception& e) {
-            error = e.what();  // co_await 不允许出现在 catch 块内，先记录再等
+            error = e.what();  // co_await 不允许出现在 catch 块内，先记录后处理
         }
+
+        // 残留 webhook：自动清理一次，清完立刻重试（不进退避）
+        if (errorCode == 409 && !webhookCleanupTried) {
+            webhookCleanupTried = true;
+            spdlog::warn(
+                "getUpdates 409 Conflict：检测到 webhook 仍在生效，尝试 "
+                "deleteWebhook(false) 后立即重试");
+            try {
+                co_await bot.deleteWebhook(false);
+            } catch (const std::exception& e) {
+                spdlog::error("deleteWebhook failed: {}", e.what());
+            }
+            continue;
+        }
+
+        // 永久错误（401/403/404）。默认退出：getUpdates 永久失败意味着一条
+        // 消息都收不到，进程别假装还活着。注意这只管 getUpdates——业务 handler
+        // 里的 403（被踢出群、没有删消息权限）只会被 Dispatcher 记日志。
         if (!error.empty()) {
-            if (errorCode == 409) {
+            const bool permanent = (errorCode != 0) && isPermanentError(errorCode);
+            if (permanent && opts.permanentErrorPolicy ==
+                                 LongPollOptions::PermanentErrorPolicy::kExit) {
                 spdlog::error(
-                    "HTTP 409: 另一个进程正在用同一个 token 跑长轮询，"
-                    "请停掉它或换 token；{}s 后重试", backoff.count());
+                    "getUpdates 永久失败（{}）: {}；停止长轮询并退出（想一直重试"
+                    "可设 LongPollOptions::permanentErrorPolicy = kRetryForever）",
+                    errorCode, error);
+                throw TelegramApiError{errorCode, error};
+            }
+            if (permanent) {
+                spdlog::error("getUpdates 永久错误（{}）: {}；按配置继续退避重试",
+                              errorCode, error);
+            } else if (errorCode == 409) {
+                spdlog::error(
+                    "HTTP 409：webhook 已清理后仍然冲突，说明另一个进程正在用"
+                    "同一个 token 跑长轮询，请停掉它或换 token；{}s 后重试",
+                    backoff.count());
             } else {
                 spdlog::error("getUpdates failed: {}; retry in {}s", error,
                               backoff.count());
@@ -126,9 +238,22 @@ net::awaitable<void> longPollLoop(BotClient& bot, Dispatcher& dispatcher,
             chatStrands.dispatch(update, bot, dispatcher);
         }
         if (!updates.empty()) {
-            saveOffset(offset);
+            saveOffset(opts.offsetFile, offset);
         }
     }
+}
+
+}  // namespace
+
+net::awaitable<void> longPollLoop(BotClient& bot, Dispatcher& dispatcher,
+                                  const std::atomic<bool>* shuttingDown) {
+    co_await longPollLoopImpl(bot, dispatcher, LongPollOptions{}, shuttingDown);
+}
+
+net::awaitable<void> longPollLoop(BotClient& bot, Dispatcher& dispatcher,
+                                  const LongPollOptions& options,
+                                  const std::atomic<bool>* shuttingDown) {
+    co_await longPollLoopImpl(bot, dispatcher, options, shuttingDown);
 }
 
 }  // namespace tgbot
