@@ -32,7 +32,9 @@ add_library(tgbot STATIC
     src/dispatcher.cpp
     src/long_poll.cpp
     src/rate_limiter.cpp
+    src/rich_text.cpp
     src/sqlite_state_store.cpp
+    src/stream_message.cpp
     src/webhook.cpp
 )
 

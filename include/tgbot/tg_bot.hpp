@@ -18,6 +18,8 @@
 #include <tgbot/bot_client.hpp>
 #include <tgbot/dispatcher.hpp>
 #include <tgbot/long_poll.hpp>
+#include <tgbot/rich_text.hpp>
 #include <tgbot/state_store.hpp>
+#include <tgbot/stream_message.hpp>
 #include <tgbot/util.hpp>
 #include <tgbot/webhook.hpp>

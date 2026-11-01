@@ -204,6 +204,22 @@ net::awaitable<json> BotClient::sendMessage(std::int64_t chatId,
 
 net::awaitable<json> BotClient::sendMessage(std::int64_t chatId,
                                             const std::string& text,
+                                            const SendOptions& options) {
+    co_await limiter_.beforeSend(chatId);
+    std::map<std::string, std::string> params{
+        {"chat_id", std::to_string(chatId)}, {"text", text}};
+    if (const char* mode = parseModeName(options.parseMode); mode != nullptr) {
+        params.emplace("parse_mode", mode);
+    }
+    if (options.disableWebPagePreview) {
+        params.emplace("link_preview_options", R"({"is_disabled":true})");
+    }
+    co_return co_await apiCall("sendMessage", std::move(params),
+                               RetryPolicy::kNoTransportRetry);
+}
+
+net::awaitable<json> BotClient::sendMessage(std::int64_t chatId,
+                                            const std::string& text,
                                             const json& replyMarkup) {
     co_await limiter_.beforeSend(chatId);
     co_return co_await apiCall("sendMessage",
@@ -221,6 +237,25 @@ net::awaitable<json> BotClient::editMessageText(std::int64_t chatId,
                                {{"chat_id", std::to_string(chatId)},
                                 {"message_id", std::to_string(messageId)},
                                 {"text", text}},
+                               RetryPolicy::kNoTransportRetry);
+}
+
+net::awaitable<json> BotClient::editMessageText(std::int64_t chatId,
+                                                std::int64_t messageId,
+                                                const std::string& text,
+                                                const SendOptions& options) {
+    co_await limiter_.beforeSend(chatId);
+    std::map<std::string, std::string> params{
+        {"chat_id", std::to_string(chatId)},
+        {"message_id", std::to_string(messageId)},
+        {"text", text}};
+    if (const char* mode = parseModeName(options.parseMode); mode != nullptr) {
+        params.emplace("parse_mode", mode);
+    }
+    if (options.disableWebPagePreview) {
+        params.emplace("link_preview_options", R"({"is_disabled":true})");
+    }
+    co_return co_await apiCall("editMessageText", std::move(params),
                                RetryPolicy::kNoTransportRetry);
 }
 

@@ -19,6 +19,7 @@
 #include <cstdio>
 #include <exception>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -183,6 +184,95 @@ void testPermanentErrorClassifier() {
     CHECK(!tgbot::isPermanentError(500));
 }
 
+std::string squashSpaces(std::string_view s) {
+    std::string out;
+    for (const char c : s) {
+        if (c != ' ' && c != '\n' && c != '\r' && c != '\t') {
+            out += c;
+        }
+    }
+    return out;
+}
+
+// 整块必须是合法 UTF-8（块尾出现"半个汉字"就说明切错了位置）
+bool validUtf8(std::string_view s) {
+    std::size_t i = 0;
+    while (i < s.size()) {
+        const auto c = static_cast<unsigned char>(s[i]);
+        std::size_t len = 0;
+        if (c < 0x80) {
+            len = 1;
+        } else if ((c & 0xE0) == 0xC0) {
+            len = 2;
+        } else if ((c & 0xF0) == 0xE0) {
+            len = 3;
+        } else if ((c & 0xF8) == 0xF0) {
+            len = 4;
+        } else {
+            return false;
+        }
+        if (i + len > s.size()) {
+            return false;
+        }
+        for (std::size_t k = 1; k < len; ++k) {
+            if ((static_cast<unsigned char>(s[i + k]) & 0xC0) != 0x80) {
+                return false;
+            }
+        }
+        i += len;
+    }
+    return true;
+}
+
+void testRichText() {
+    std::printf("test: rich text escaping / splitting\n");
+
+    CHECK(tgbot::escapeHtml("a<b>&c") == "a&lt;b&gt;&amp;c");
+    CHECK(tgbot::escapeHtml("plain") == "plain");
+    CHECK(tgbot::escapeMarkdownV2("a_b*c.d!") == "a\\_b\\*c\\.d\\!");
+    CHECK(tgbot::escapeMarkdownV2("abc") == "abc");
+
+    CHECK(tgbot::parseModeName(tgbot::ParseMode::kNone) == nullptr);
+    CHECK(std::string{tgbot::parseModeName(tgbot::ParseMode::kHtml)} == "HTML");
+    CHECK(std::string{tgbot::parseModeName(tgbot::ParseMode::kMarkdownV2)} ==
+          "MarkdownV2");
+
+    // 纯文本分块：长度不超限、除空白外内容不丢
+    std::string longText;
+    for (int i = 0; i < 400; ++i) {
+        longText += "第" + std::to_string(i) + "行：这是一段用于测试分块的中文内容\n";
+    }
+    const auto parts = tgbot::splitMessage(longText, 200);
+    CHECK(parts.size() > 1);
+    std::string joined;
+    for (const auto& p : parts) {
+        CHECK(p.size() <= 200);
+        CHECK(!p.empty());
+        // 整块必须是合法 UTF-8（块尾不能留半个汉字）
+        CHECK(validUtf8(p));
+        joined += p;
+    }
+    CHECK(squashSpaces(joined) == squashSpaces(longText));
+
+    // HTML 分块：每段内部标签必须自平衡（<b> 与 </b> 数量相等）
+    std::string html = "<b>";
+    for (int i = 0; i < 300; ++i) {
+        html += "加粗内容";
+    }
+    html += "</b>";
+    const auto htmlParts =
+        tgbot::splitMessage(html, 120, tgbot::ParseMode::kHtml);
+    CHECK(htmlParts.size() > 1);
+    for (const auto& p : htmlParts) {
+        const auto opens = std::count(p.begin(), p.end(), '<');
+        // <b> 与 </b> 各算一个 '<'，数量应为偶数
+        CHECK(opens % 2 == 0);
+        CHECK(p.find("<b>") != std::string::npos);
+        CHECK(p.find("</b>") != std::string::npos);
+    }
+}
+
+
 }  // namespace
 
 int main() {
@@ -190,6 +280,7 @@ int main() {
     testCallbackPrefix();
     testRateLimiterSpacing();
     testPermanentErrorClassifier();
+    testRichText();
 
     std::printf("\n%d checks, %d failed\n", g_checks, g_failed);
     return g_failed == 0 ? 0 : 1;
