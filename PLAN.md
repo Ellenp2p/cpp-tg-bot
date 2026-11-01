@@ -203,9 +203,34 @@ M1 → M2 → M3（此时已是一个可跑的 Bot）
     release 改为单 publish job（避免三 job 并发建 release）。
 
 **留待有工具链时再做**
-- HTTP 层超时：`ssl::stream<beast::tcp_stream>` + `expires_after`，
-  当前 resolve/connect/handshake/read 没有 deadline，一次黑洞连接会让机器人
-  静默假死（这是目前最大的剩余风险）。
-- Bot API 改 POST：长文本/大键盘用 GET + query 会撞 URL 长度上限。
-- `vcpkg.json` 加 `builtin-baseline`，让依赖版本不再随 vcpkg HEAD 漂移。
-- 单元测试：限速器时间槽、`Dispatcher` 命令解析/前缀匹配、webhook 校验。
+- ~~HTTP 层超时~~、~~Bot API 改 POST~~、~~`builtin-baseline`~~、~~单元测试~~
+  → 已在 M11 完成（见下）。
+
+## 8. M11 收尾（2026-11-01）
+
+M10 遗留的四项全部落地，并且这次是**真机编译 + 运行验证**过的
+（MSVC 14.44 / vcpkg `d186940b` / Windows 11）。
+
+1. **HTTP 全链路超时**：`Connection` 的流从 `ssl::stream<tcp::socket>` 换成
+   `ssl::stream<beast::tcp_stream>`，用它自带的截止时间给
+   连接（10s）/ TLS 握手（15s）/ 写（15s）/ 读（按请求给）加超时。
+   读超时做成 `HttpRequest::readTimeout`，长轮询传 `timeout + 15s`，
+   否则正常的 30 秒静默等待会被自己的超时打断。
+   实测：本地起一个"accept 后永不应答"的监听，15.0s 后抛
+   `The socket was closed due to a timeout`——正是原先"机器人假死"的根因。
+2. **Bot API 改 POST**：`apiCall` 把参数放表单 body，URL 只留
+   `/bot<token>/<method>`。4096 字的 `text` 原先百分号编码后能到 ~12KB，
+   撞 URL 长度上限就是一发 414。实测假 token 调 `getMe` 仍正确返回 401，
+   说明 POST 通路正常。
+3. **`vcpkg.json` 固定 `builtin-baseline`**：锁到 deps release 对应的
+   `d186940b2f0c4e8e5b4ff804af57d2a26fbfa091`，依赖版本不再随 vcpkg HEAD 漂移。
+4. **单元测试**：`tests/tests.cpp` + CTest（不引第三方框架），覆盖
+   `Dispatcher` 命令解析 / callback 最长前缀 / `RateLimiter` 时间槽 /
+   永久错误分类，20 项断言；CI 三平台加 `ctest` 步骤。
+   限速器那条同时是"先占槽后等待"的回归测试（旧实现会测出 0 间隔）。
+
+**仍留在 backlog（非缺陷，属功能增强）**
+- 群消息 20 msg/min 的独立限速（框架目前不知道 chat 类型，需调用方配合传入）
+- Bot API 的文件上传（`sendPhoto`/`sendDocument` 需要 multipart）
+- 自建 Bot API server 支持（host 目前写死 `api.telegram.org`）
+

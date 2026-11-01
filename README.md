@@ -173,6 +173,19 @@ export TG_BOT_TOKEN=<你的token> && ./build/group_admin
 群里发 `/sticker on` 开启贴纸 60 秒自动过期，`/sticker off` 关闭
 （仅群管理员可开关，设置存 `group_admin_state.db`，SQLite 持久化，重启不丢）。
 
+## 测试
+
+自带一组不依赖网络的单元测试（CTest，不需要第三方测试框架）：
+
+```bash
+cmake --build build --config Release
+ctest --test-dir build -C Release --output-on-failure   # 或直接跑 build/Release/tgbot_tests
+```
+
+覆盖：`Dispatcher` 的命令解析（`/cmd@Bot` 归一化、过滤发给其他 bot 的命令）、
+callback 最长前缀匹配、`RateLimiter` 的时间槽间隔（同聊天 ≥1s、全局 ≥~34ms，
+同时是"先占槽后等待"的回归测试）、永久错误分类。
+
 ## CI / Release
 
 - 每次 push / PR 跑 [CI](.github/workflows/ci.yml)，三平台矩阵：
@@ -203,10 +216,14 @@ export TG_BOT_TOKEN=<你的token> && ./build/group_admin
 | nlohmann-json | Bot API 的 JSON |
 | spdlog | 日志 |
 | SQLite3 | 状态持久化（`StateStore` 接口，见 `tgbot/state_store.hpp`） |
-| vcpkg | 依赖管理（始终解析仓库内最新版本） |
+| vcpkg | 依赖管理（`vcpkg.json` 固定 `builtin-baseline`，版本可复现） |
 
 ## 备注
 
+- **HTTP 细节**：所有 Bot API 调用走 `POST application/x-www-form-urlencoded`
+  （不再把参数拼进 URL，长文本/大键盘不会撞 URL 长度上限）。全链路都有超时：
+  连接 10s、TLS 握手 15s、写 15s、读由请求指定（长轮询取
+  `timeout + 15s`），对端黑洞不会再让机器人静默假死
 - **退出码**：启动失败（错 token、端口被占、webhook 注册失败）退出码是 1；
   运行中遇到 401/403/404 这类永久错误也会直接退出而不是无限重试，
   方便 systemd `Restart=on-failure` / 容器重启策略生效

@@ -2,6 +2,7 @@
   "name": "tgbot",
   "version-string": "0.2.0",
   "description": "Async Telegram bot framework in C++20 with Boost.Asio coroutines",
+  "builtin-baseline": "d186940b2f0c4e8e5b4ff804af57d2a26fbfa091",
   "dependencies": [
     "boost-asio",
     "boost-beast",
