@@ -31,6 +31,8 @@ add_library(tgbot STATIC
     src/bot_client.cpp
     src/dispatcher.cpp
     src/long_poll.cpp
+    src/lottery_panel.cpp
+    src/panel.cpp
     src/rate_limiter.cpp
     src/rich_text.cpp
     src/sqlite_state_store.cpp

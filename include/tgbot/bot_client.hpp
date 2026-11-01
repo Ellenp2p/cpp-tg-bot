@@ -39,11 +39,13 @@ inline constexpr char kDefaultAllowedUpdates[] = R"(["message","callback_query"]
 //   所以直接失败让业务决定
 enum class RetryPolicy { kDefault, kNoTransportRetry };
 
-// 发送类接口的富文本/预览控制。
+// 发送类接口的富文本/键盘控制。
 // 程序拼接内容优先用 kHtml（只需转义 & < >），见 tgbot/rich_text.hpp
 struct SendOptions {
     ParseMode parseMode = ParseMode::kNone;
     bool disableWebPagePreview = false;
+    // inline_keyboard / reply_keyboard 等，null 表示不带键盘
+    nlohmann::json replyMarkup = nullptr;
 };
 
 // Ephemeral Message 参数（Bot API 10.2+）：发送"群里只有指定用户可见"的消息。
@@ -120,7 +122,8 @@ public:
         const SendOptions& options);
     // 回按钮的"气泡提示"（alert=false 时为轻提示）
     boost::asio::awaitable<void> answerCallbackQuery(
-        const std::string& callbackQueryId, const std::string& text = "");
+        const std::string& callbackQueryId, const std::string& text = "",
+        bool showAlert = false);
     // 删除消息；失败（已删除/太老/无权限）抛 TelegramApiError
     boost::asio::awaitable<nlohmann::json> deleteMessage(
         std::int64_t chatId, std::int64_t messageId);
