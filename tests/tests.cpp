@@ -8,9 +8,11 @@
 
 #include <tgbot/bot_client.hpp>
 #include <tgbot/dispatcher.hpp>
+#include <tgbot/job_queue.hpp>
 #include <tgbot/lottery_panel.hpp>
 #include <tgbot/panel.hpp>
 #include <tgbot/rate_limiter.hpp>
+#include <tgbot/red_packet_ledger.hpp>
 #include <tgbot/red_packet_panel.hpp>
 
 #include <boost/asio/co_spawn.hpp>
@@ -21,6 +23,7 @@
 #include <chrono>
 #include <cstdio>
 #include <exception>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -366,15 +369,53 @@ void testLotteryPanel() {
     CHECK(plainFx.privateMessages.empty());
 }
 
+void testRedPacketLedger() {
+    std::printf("test: red packet ledger (atomic grab + refund once)\n");
+
+    auto ledger = std::make_shared<tgbot::RedPacketLedger>(":memory:");
+    const auto id =
+        ledger->create(-100, 1, 10000, 5, std::chrono::seconds{3600});
+
+    auto row = ledger->get(id);
+    CHECK(row.has_value());
+    CHECK(row->remainingCents == 10000);
+    CHECK(row->remainingCount == 5);
+    CHECK(row->state == "open");
+
+    // 余额不足：不扣
+    CHECK(!ledger->grab(id, 10, "@a", 20000));
+    CHECK(ledger->get(id)->remainingCents == 10000);
+
+    CHECK(ledger->grab(id, 10, "@a", 1000));
+    CHECK(ledger->get(id)->remainingCents == 9000);
+    CHECK(!ledger->grab(id, 10, "@a", 1000));  // 同一人重复领
+    CHECK(ledger->get(id)->remainingCents == 9000);
+
+    // 退款权只可能被抢到一次
+    CHECK(ledger->beginRefund(id));
+    CHECK(!ledger->beginRefund(id));
+    ledger->finishRefund(id, "tx-1");
+    CHECK(ledger->get(id)->state == "refunded");
+    CHECK(ledger->get(id)->txRef == "tx-1");
+    CHECK(!ledger->beginRefund(id));
+
+    // 抢完 → exhausted，再抢不到
+    const auto id2 = ledger->create(-100, 1, 300, 2, std::chrono::seconds{60});
+    CHECK(ledger->grab(id2, 20, "@b", 100));
+    CHECK(ledger->grab(id2, 21, "@c", 200));
+    CHECK(ledger->get(id2)->state == "exhausted");
+    CHECK(!ledger->grab(id2, 22, "@d", 1));
+}
+
 void testRedPacketPanel() {
     std::printf("test: red packet panel (群内可见)\n");
 
-    tgbot::RedPacketPanel::Config cfg;
-    cfg.totalCents = 10000;  // ¥100.00
-    cfg.totalCount = 5;
-    cfg.creatorId = 1;
-    cfg.seed = 12345;  // 固定随机数，保证可复现
-    tgbot::RedPacketPanel panel(cfg);
+    auto ledger = std::make_shared<tgbot::RedPacketLedger>(":memory:");
+    const auto id = ledger->create(-100, 1, 10000, 5, std::chrono::seconds{3600});
+
+    tgbot::RedPacketPanel::Options opts;
+    opts.seed = 12345;  // 固定随机数，可复现
+    tgbot::RedPacketPanel panel(ledger, id, opts);
 
     tgbot::PanelEvent ev;
     ev.action = "grab";
@@ -384,63 +425,95 @@ void testRedPacketPanel() {
     tgbot::PanelEffects fx;
     CHECK(!panel.onClick(ev, fx));
     CHECK(fx.showAlert);
-    CHECK(panel.grabberCount() == 0);
+    CHECK(ledger->grabs(id).empty());
 
-    // 5 个人抢完：金额守恒、每人至少 1 分
-    std::int64_t sum = 0;
+    // 5 个人抢完：金额守恒
     for (int i = 0; i < 5; ++i) {
         ev.userId = 100 + i;
         ev.userName = "@user" + std::to_string(i);
         fx = {};
         CHECK(panel.onClick(ev, fx));
         CHECK(fx.answer.find("抢到") != std::string::npos);
-        const auto got = panel.grabbedCents(100 + i);
-        CHECK(got >= 1);
-        sum += got;
     }
-    CHECK(sum == cfg.totalCents);
+    std::int64_t sum = 0;
+    for (const auto& grab : ledger->grabs(id)) {
+        CHECK(grab.cents >= 1);
+        sum += grab.cents;
+    }
+    CHECK(sum == 10000);
+    CHECK(ledger->get(id)->state == "exhausted");
     CHECK(panel.finished());
-    CHECK(panel.remainingCents() == 0);
-    CHECK(panel.remainingCount() == 0);
 
     // 抢完之后再来的人
     ev.userId = 999;
     fx = {};
     CHECK(!panel.onClick(ev, fx));
-    CHECK(fx.answer.find("手慢了") != std::string::npos);
 
-    // 群里看到的就是名单，且按钮消失
+    // 群里看到名单，且按钮消失
     const auto view = panel.render();
     CHECK(view.text.find("已抢完") != std::string::npos);
     CHECK(view.text.find("@user0") != std::string::npos);
     CHECK(view.keyboard.is_null());
 
-    // 同一个人重复抢：金额不变、人数不变
-    tgbot::RedPacketPanel::Config cfg2;
-    cfg2.totalCents = 500;
-    cfg2.totalCount = 2;
-    cfg2.seed = 7;
-    tgbot::RedPacketPanel repeat(cfg2);
+    // 重复抢：金额和人数都不变
+    const auto id2 = ledger->create(-100, 1, 500, 2, std::chrono::seconds{60});
+    tgbot::RedPacketPanel repeat(ledger, id2, opts);
     ev.userId = 42;
     fx = {};
     CHECK(repeat.onClick(ev, fx));
-    const auto first = repeat.grabbedCents(42);
+    const auto afterFirst = ledger->grabs(id2);
+    CHECK(afterFirst.size() == 1);
+    const auto first = afterFirst.empty() ? -1 : afterFirst.front().cents;
     fx = {};
     CHECK(!repeat.onClick(ev, fx));
-    CHECK(repeat.grabbedCents(42) == first);
-    CHECK(repeat.grabberCount() == 1);
+    CHECK(ledger->grabs(id2).size() == 1);
+    const auto afterRepeat = ledger->grabs(id2);
+    CHECK(!afterRepeat.empty() && afterRepeat.front().cents == first);
+}
+
+void testJobQueue() {
+    std::printf("test: durable job queue (延迟 + 幂等 + 重试)\n");
+
+    tgbot::JobQueue jobs(":memory:");
+
+    tgbot::Job job;
+    job.key = "refund:1";
+    job.kind = "demo";
+    job.payload = "{}";
+    job.runAt = std::chrono::system_clock::now() - std::chrono::seconds{1};
+
+    jobs.enqueue(job);
+    jobs.enqueue(job);  // 幂等：同一个 key 不会重复入队
+    CHECK(jobs.countPending() == 1);
+
+    auto claimed = jobs.claimNext();
+    CHECK(claimed.has_value());
+    CHECK(claimed->key == "refund:1");
+    CHECK(claimed->attempts == 1);
+    CHECK(!jobs.claimNext().has_value());  // 已被领走，不会重复领
+
+    // 失败后退避：短期内领不到
+    jobs.markRetry(claimed->id, "boom");
+    CHECK(jobs.countPending() == 1);
+    CHECK(!jobs.claimNext().has_value());
+
+    jobs.markDone(claimed->id);
+    CHECK(jobs.countPending() == 0);
 }
 
 }  // namespace
 
 int main() {
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
     testCommandParsing();
     testCallbackPrefix();
     testRateLimiterSpacing();
     testPermanentErrorClassifier();
     testRichText();
     testLotteryPanel();
+    testRedPacketLedger();
     testRedPacketPanel();
+    testJobQueue();
 
     std::printf("\n%d checks, %d failed\n", g_checks, g_failed);
     return g_failed == 0 ? 0 : 1;
