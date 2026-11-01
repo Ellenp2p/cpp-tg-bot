@@ -1,6 +1,8 @@
 #include <tgbot/bot_client.hpp>
 #include <tgbot/dispatcher.hpp>
 #include <tgbot/long_poll.hpp>
+#include <tgbot/lottery_panel.hpp>
+#include <tgbot/panel.hpp>
 #include <tgbot/rich_text.hpp>
 #include <tgbot/stream_message.hpp>
 #include <tgbot/util.hpp>
@@ -50,6 +52,7 @@ net::awaitable<int> run(const std::string& token) {
         {"inline", "inline 键盘演示", false},
         {"rich", "富文本渲染演示", false},
         {"stream", "流式输出演示", false},
+        {"lottery", "发一个抽奖操作台（红包）", false},
     };
     try {
         co_await bot.setMyCommands(commands);
@@ -60,6 +63,11 @@ net::awaitable<int> run(const std::string& token) {
     tgbot::Dispatcher dispatcher;
     // 群里多个 bot 时，"/inline@OtherBot" 不归我们处理
     dispatcher.setBotUsername(botUsername);
+
+    // 操作台：一条消息 = 一块可交互面板（抽奖/红包等）。ticker 负责倒计时开奖
+    tgbot::PanelManager panels(bot);
+    net::co_spawn(co_await net::this_coro::executor, panels.runTicker(),
+                  net::detached);
 
     dispatcher.onCommand("start", [](tgbot::BotClient& bot,
                                      const json msg) -> net::awaitable<void> {
@@ -111,6 +119,26 @@ net::awaitable<int> run(const std::string& token) {
                 co_await tgbot::co_sleep(std::chrono::milliseconds{200});
             }
             co_await stream.finish();
+        });
+
+    // 抽奖操作台：/lottery 发一条可交互消息，点按钮参与，到点自动开奖
+    dispatcher.onCommand(
+        "lottery", [&panels](tgbot::BotClient&, const json msg) -> net::awaitable<void> {
+            const auto chatId = msg["chat"].value("id", std::int64_t{0});
+            tgbot::LotteryPanel::Config cfg;
+            cfg.title = "新年红包";
+            cfg.prize = "专属红包";
+            cfg.winnerCount = 1;
+            cfg.duration = std::chrono::seconds{120};
+            cfg.creatorId = msg["from"].value("id", std::int64_t{0});
+            co_await panels.open(chatId,
+                                 std::make_shared<tgbot::LotteryPanel>(cfg));
+        });
+
+    // 所有操作台按钮统一走 "p:" 前缀
+    dispatcher.onCallbackQuery(
+        "p:", [&panels](tgbot::BotClient&, const json cq) -> net::awaitable<void> {
+            co_await panels.handleCallback(cq);
         });
 
     // inline 键盘演示：/inline 出按钮，点击回 pong 气泡

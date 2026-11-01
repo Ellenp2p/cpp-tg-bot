@@ -208,6 +208,43 @@ co_await stream.finish();                      // 去掉光标、做最终渲染
 `examples/echo_bot` 里有现成演示：`/rich` 展示各种 HTML 标签，
 `/stream` 模拟逐段生成。
 
+## 消息操作台（Panel 抽象）
+
+一条消息可以当"操作台"用：点按钮 → 改状态 → **原地编辑同一条消息**。
+框架把它抽成三层，业务只写状态机：
+
+| 层 | 职责 |
+|---|---|
+| `Panel`（抽象基类） | `render()` 出文本+键盘；`onClick()` 改状态、往 `PanelEffects` 填副作用。**不做 I/O、不是协程**，所以能单测 |
+| `PanelEffects` | 提示气泡 / 只有某人可见的私密消息 / 额外公开消息，由 manager 统一执行 |
+| `PanelManager` | 发消息、按 `p:<action>` 路由回调、先应答再编辑、跑倒计时 ticker |
+
+```cpp
+tgbot::PanelManager panels(bot);
+net::co_spawn(executor, panels.runTicker(), net::detached);  // 倒计时/自动开奖
+
+dispatcher.onCallbackQuery("p:", [&panels](tgbot::BotClient&, const json cq)
+        -> net::awaitable<void> { co_await panels.handleCallback(cq); });
+
+// 发一个抽奖面板
+tgbot::LotteryPanel::Config cfg;
+cfg.creatorId = msg["from"].value("id", std::int64_t{0});  // 只有发起者能手动开奖
+cfg.winnerCount = 1;
+cfg.duration = std::chrono::seconds{120};
+co_await panels.open(chatId, std::make_shared<tgbot::LotteryPanel>(cfg));
+```
+
+内置的 `LotteryPanel` 覆盖了：参与去重、发起者限权开奖、到点自动开奖、
+中奖者收到"只有自己可见"的私密消息（专属红包码）。
+
+**响应速度**：点击后先 `answerCallbackQuery`（客户端立刻停掉转圈），再编辑消息；
+同一个面板的点击由该聊天的 strand 串行处理，不会并发改同一条消息。
+`editMessageText` 与发送共用同一套限速器，所以高频点击会被合并、不会打爆 Telegram。
+
+**局限（下一步）**：面板状态在内存里，进程重启后丢失；持久化可以挂 `StateStore`
+（`Panel::type()` 已预留）。`sendEphemeralMessage` 目前不带 `parse_mode`，
+所以私密消息用纯文本。
+
 ## 测试
 
 自带一组不依赖网络的单元测试（CTest，不需要第三方测试框架）：
