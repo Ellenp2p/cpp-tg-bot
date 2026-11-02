@@ -20,6 +20,17 @@ class RateLimiter {
 public:
     boost::asio::awaitable<void> beforeSend(std::int64_t chatId);
 
+    // 清理长时间未发送的 chat 槽位，避免按群无限增长。
+    void pruneInactive(std::chrono::steady_clock::time_point cutoff) {
+        for (auto it = nextChatSend_.begin(); it != nextChatSend_.end();) {
+            if (it->second < cutoff) {
+                it = nextChatSend_.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+
 private:
     static constexpr auto kGlobalInterval = std::chrono::milliseconds{34};  // ~30/s
     static constexpr auto kChatInterval = std::chrono::seconds{1};

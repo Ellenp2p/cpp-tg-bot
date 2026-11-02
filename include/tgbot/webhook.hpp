@@ -4,6 +4,7 @@
 #include <tgbot/dispatcher.hpp>
 
 #include <atomic>
+#include <cstddef>
 #include <string>
 
 namespace tgbot {
@@ -24,8 +25,15 @@ struct WebhookConfig {
     std::string tlsCert;      // PEM 证书链（与 tlsKey 同时设置才启用 TLS）
     std::string tlsKey;       // PEM 私钥
     int maxConnections = 40;  // Telegram 并发投递上限（官方默认 40）
+
+    // 有界 update 队列 + per-chat lane + 固定 worker 协程
+    std::size_t maxPendingUpdates = 2000;
+    int updateWorkers = 8;
     // 启动时清空积压 updates（"停机即完全停止"语义，与长轮询模式一致）
     bool dropPendingUpdates = true;
+    // 订阅的 update 类型（JSON 数组字符串）。留空则沿用服务端上一次设置；
+    // 需要 my_chat_member / chat_member 时显式填，否则可能被残留配置过滤掉
+    std::string allowedUpdates;
     // 启动时执行 setWebhook 注册（默认开）。本地自测接收端时可关：
     // 不碰真实 bot 的 webhook 配置，直接向本地端口伪造 POST 即可
     bool registerOnStart = true;
@@ -34,8 +42,9 @@ struct WebhookConfig {
 // webhook 主循环（同一 io_context 协程内 co_await）：
 //   1. 启动 HTTP/1.1 监听（TLS 可选）
 //   2. setWebhook 注册投递地址（drop_pending_updates 清积压）
-//   3. 循环接受连接 → 校验 method/path/secret token → 立即回 200
-//      → 按 chat strand 异步派发（与长轮询同一套串行语义）
+//   3. 循环接受连接 → 校验 method/path/secret token → 尝试压入有界队列
+//      → 成功回 200；队列满回 503，让 Telegram 重试
+//      → 按 per-chat lane + 固定 worker 协程处理（与长轮询同一套语义）
 // Telegram 对非 2xx 响应会自动重试；shuttingDown 置位后回 503 且不再派发，
 // 进程退出期间积压的 update 由下次启动的 drop_pending_updates 清掉。
 boost::asio::awaitable<void> webhookLoop(

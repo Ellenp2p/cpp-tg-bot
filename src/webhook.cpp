@@ -59,13 +59,13 @@ void setExpiry(ssl::stream<beast::tcp_stream>& stream) {
 // ---- 单连接会话：plain 与 TLS 流共用 ----
 // Telegram 对非 2xx 会自动重试，所以校验失败也要给出明确状态码而不是断连。
 //
-// strands 用 shared_ptr 持有：会话协程是 detached 的，可能比 acceptLoop 活得久，
+// updateWorkers 用 shared_ptr 持有：会话协程是 detached 的，可能比 acceptLoop 活得久，
 // 绝不能裸引用 acceptLoop 栈上的对象。path 由上层按值持有，这里只借用。
 
 template <typename Stream>
 net::awaitable<void> session(std::unique_ptr<Stream> stream,
                              const WebhookConfig& cfg, std::string_view path,
-                             std::shared_ptr<detail::ChatStrands> strands,
+                             std::shared_ptr<detail::UpdateWorkers> updateWorkers,
                              BotClient& bot, Dispatcher& dispatcher,
                              const std::atomic<bool>* shuttingDown) {
     beast::flat_buffer buffer;  // 跨 keep-alive 请求复用读缓冲
@@ -82,7 +82,6 @@ net::awaitable<void> session(std::unique_ptr<Stream> stream,
 
             http::status status = http::status::ok;
             json update;
-            bool doDispatch = false;
 
             if (req.method() != http::verb::post) {
                 status = http::status::method_not_allowed;
@@ -111,7 +110,11 @@ net::awaitable<void> session(std::unique_ptr<Stream> stream,
                     // 停机中：不派发，回 503 让 Telegram 稍后重试
                     status = http::status::service_unavailable;
                 } else {
-                    doDispatch = true;
+                    // 先入有界队列，入队成功才回 200；满了回 503，
+                    // Telegram 会重试，不能先 200 再丢 update。
+                    if (!updateWorkers->dispatch(update, bot, dispatcher)) {
+                        status = http::status::service_unavailable;
+                    }
                 }
             }
 
@@ -129,10 +132,6 @@ net::awaitable<void> session(std::unique_ptr<Stream> stream,
 
             if (!res.keep_alive()) {
                 co_return;
-            }
-            if (doDispatch) {
-                // 响应已确认（Telegram 视为投递成功），再异步派发业务
-                strands->dispatch(update, bot, dispatcher);
             }
         }
     } catch (const boost::system::system_error& e) {
@@ -154,27 +153,38 @@ net::awaitable<void> session(std::unique_ptr<Stream> stream,
 // 让启动直接失败（fatal）；若在这里面做，异常会被 detached 吞掉，
 // 表现为"webhook registered 但根本没有监听"的静默故障。
 //
-// tlsCtx / strands 都用 shared_ptr 传递：acceptLoop 退出后（比如 accept 抛
+// tlsCtx / updateWorkers 都用 shared_ptr 传递：acceptLoop 退出后（比如 accept 抛
 // EMFILE）已经在飞的会话协程仍然持有它们，裸指针会变成 use-after-free。
 
-net::awaitable<void> acceptLoop(net::ip::tcp::acceptor acceptor,
-                                const WebhookConfig& cfg, std::string path,
-                                BotClient& bot, Dispatcher& dispatcher,
-                                const std::atomic<bool>* shuttingDown,
-                                std::shared_ptr<ssl::context> tlsCtx,
-                                std::shared_ptr<detail::ChatStrands> strands) {
+net::awaitable<void> acceptLoop(
+    std::shared_ptr<net::ip::tcp::acceptor> acceptor, const WebhookConfig& cfg,
+    std::string path, BotClient& bot, Dispatcher& dispatcher,
+    const std::atomic<bool>* shuttingDown,
+    std::shared_ptr<ssl::context> tlsCtx,
+    std::shared_ptr<detail::UpdateWorkers> updateWorkers) {
     const auto executor = co_await net::this_coro::executor;
     spdlog::info("webhook listening on {}://{}:{}", tlsCtx ? "https" : "http",
                  cfg.host, cfg.port);
 
     try {
         while (true) {
-            auto socket = co_await acceptor.async_accept(net::use_awaitable);
+            if (shuttingDown != nullptr && shuttingDown->load()) {
+                boost::system::error_code ignored;
+                acceptor->close(ignored);
+                co_return;
+            }
+            auto socket =
+                co_await acceptor->async_accept(net::use_awaitable);
+            if (shuttingDown != nullptr && shuttingDown->load()) {
+                boost::system::error_code ignored;
+                socket.close(ignored);
+                co_return;
+            }
             net::co_spawn(
                 executor,
                 [sock = std::move(socket), &cfg, path, &bot, &dispatcher,
                  shuttingDown, tlsCtx,
-                 strands]() mutable -> net::awaitable<void> {
+                 updateWorkers]() mutable -> net::awaitable<void> {
                     auto tcp =
                         std::make_unique<beast::tcp_stream>(std::move(sock));
                     try {
@@ -185,10 +195,10 @@ net::awaitable<void> acceptLoop(net::ip::tcp::acceptor acceptor,
                             tls->next_layer().expires_after(kIoTimeout);
                             co_await tls->async_handshake(
                                 ssl::stream_base::server, net::use_awaitable);
-                            co_await session(std::move(tls), cfg, path, strands,
+                            co_await session(std::move(tls), cfg, path, updateWorkers,
                                              bot, dispatcher, shuttingDown);
                         } else {
-                            co_await session(std::move(tcp), cfg, path, strands,
+                            co_await session(std::move(tcp), cfg, path, updateWorkers,
                                              bot, dispatcher, shuttingDown);
                         }
                     } catch (const boost::system::system_error& e) {
@@ -202,6 +212,12 @@ net::awaitable<void> acceptLoop(net::ip::tcp::acceptor acceptor,
                 },
                 net::detached);
         }
+    } catch (const boost::system::system_error& e) {
+        if (e.code() == net::error::operation_aborted) {
+            spdlog::debug("webhook acceptor closed (draining)");
+            co_return;
+        }
+        spdlog::error("webhook accept loop terminated: {}", e.what());
     } catch (const std::exception& e) {
         // accept 本身出错（资源耗尽等）：记下原因，监听中断但进程不崩
         spdlog::error("webhook accept loop terminated: {}", e.what());
@@ -238,8 +254,10 @@ net::awaitable<void> webhookLoop(BotClient& bot, Dispatcher& dispatcher,
     // 避免"注册了却没人接"的静默故障。SO_REUSEADDR 方便重启快速复用端口。
     const net::ip::tcp::endpoint endpoint{net::ip::make_address(cfg.host),
                                           cfg.port};
-    net::ip::tcp::acceptor acceptor(executor);
-    acceptor.open(endpoint.protocol());
+    // shared_ptr：drain 时 webhookLoop 要主动 close acceptor，把阻塞中的
+    // async_accept 打断；acceptLoop 是 detached 的，不能裸引用栈对象。
+    auto acceptor = std::make_shared<net::ip::tcp::acceptor>(executor);
+    acceptor->open(endpoint.protocol());
     // 端口独占语义按平台区分：
     // - POSIX：SO_REUSEADDR 是正常的服务端语义（快速重启可复用处于
     //   TIME_WAIT 的端口），且仍能拦截"另一进程正在监听"的冲突
@@ -248,28 +266,31 @@ net::awaitable<void> webhookLoop(BotClient& bot, Dispatcher& dispatcher,
     //   （Asio 未封装该选项，直接 setsockopt）
 #ifdef _WIN32
     const BOOL exclusive = TRUE;
-    if (::setsockopt(acceptor.native_handle(), SOL_SOCKET, SO_EXCLUSIVEADDRUSE,
+    if (::setsockopt(acceptor->native_handle(), SOL_SOCKET,
+                     SO_EXCLUSIVEADDRUSE,
                      reinterpret_cast<const char*>(&exclusive),
                      sizeof(exclusive)) != 0) {
         throw std::runtime_error("webhook: failed to set SO_EXCLUSIVEADDRUSE");
     }
 #else
-    acceptor.set_option(net::socket_base::reuse_address(true));
+    acceptor->set_option(net::socket_base::reuse_address(true));
 #endif
-    acceptor.bind(endpoint);
-    acceptor.listen(net::socket_base::max_listen_connections);
+    acceptor->bind(endpoint);
+    acceptor->listen(net::socket_base::max_listen_connections);
 
     // strand 表在整个 webhook 生命周期内共享（与长轮询同一套按 chat 串行语义）
-    auto strands = std::make_shared<detail::ChatStrands>(executor);
+    auto updateWorkers = std::make_shared<detail::UpdateWorkers>(
+        executor, cfg.maxPendingUpdates, cfg.updateWorkers);
 
     net::co_spawn(executor,
-                  acceptLoop(std::move(acceptor), cfg, path, bot, dispatcher,
-                             shuttingDown, tls, strands),
+                  acceptLoop(acceptor, cfg, path, bot, dispatcher, shuttingDown,
+                             tls, updateWorkers),
                   net::detached);
 
     if (cfg.registerOnStart) {
         co_await bot.setWebhook(cfg.publicUrl, cfg.secretToken,
-                                cfg.maxConnections, cfg.dropPendingUpdates);
+                                cfg.maxConnections, cfg.dropPendingUpdates,
+                                cfg.allowedUpdates);
         spdlog::info(
             "webhook registered: {} (listen {}:{}, tls={}, secret={})",
             cfg.publicUrl, cfg.host, cfg.port,
@@ -282,11 +303,16 @@ net::awaitable<void> webhookLoop(BotClient& bot, Dispatcher& dispatcher,
             cfg.host, cfg.port, cfg.secretToken.empty() ? "off" : "on");
     }
 
-    // 监听循环独立运行，这里永久挂起直到 io_context 停止
-    net::steady_timer idle(executor);
-    idle.expires_at(net::steady_timer::time_point::max());
-    boost::system::error_code ec;
-    co_await idle.async_wait(net::redirect_error(net::use_awaitable, ec));
+    // 监听循环独立运行；这里负责在 drain 时关掉 acceptor 并返回。
+    // 不直接 io_context.stop()：要让 Warden 有机会等在途 handler 完成。
+    while (shuttingDown == nullptr || !shuttingDown->load()) {
+        net::steady_timer tick(executor, std::chrono::milliseconds{100});
+        boost::system::error_code ec;
+        co_await tick.async_wait(net::redirect_error(net::use_awaitable, ec));
+    }
+    boost::system::error_code closeEc;
+    acceptor->close(closeEc);
+    spdlog::info("webhook accept loop stopping (draining)");
 }
 
 }  // namespace tgbot

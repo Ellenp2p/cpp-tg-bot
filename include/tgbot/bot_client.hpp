@@ -46,6 +46,9 @@ struct SendOptions {
     bool disableWebPagePreview = false;
     // inline_keyboard / reply_keyboard 等，null 表示不带键盘
     nlohmann::json replyMarkup = nullptr;
+    // 0 = 不引用；非 0 = reply_parameters.message_id
+    std::int64_t replyToMessageId = 0;
+    bool allowSendingWithoutReply = true;
 };
 
 // Ephemeral Message 参数（Bot API 10.2+）：发送"群里只有指定用户可见"的消息。
@@ -135,7 +138,9 @@ public:
     // 其 message_id 恒为 0，后续编辑/删除用 ephemeral_message_id 标识
     boost::asio::awaitable<nlohmann::json> sendEphemeralMessage(
         std::int64_t chatId, const EphemeralMessageParameters& ephemeral,
-        const std::string& text, const nlohmann::json& replyMarkup = nullptr);
+        const std::string& text, const nlohmann::json& replyMarkup = nullptr,
+        ParseMode parseMode = ParseMode::kNone,
+        std::int64_t replyToMessageId = 0);
     // 编辑 ephemeral 消息的文本（和按钮）。成功返回 true
     boost::asio::awaitable<nlohmann::json> editEphemeralMessageText(
         std::int64_t chatId, std::int64_t receiverUserId,
@@ -152,6 +157,14 @@ public:
     // 群信息（ChatFullInfo，含默认权限 "permissions"）；静默模式开启前
     // 快照原权限用
     boost::asio::awaitable<nlohmann::json> getChat(std::int64_t chatId);
+    // 群管理员列表（数组，元素为 ChatMember）。后台"我管理的群"靠它建缓存
+    boost::asio::awaitable<nlohmann::json> getChatAdministrators(
+        std::int64_t chatId);
+    // 群成员数（ChatFullInfo 里没有时用它单独取）
+    boost::asio::awaitable<nlohmann::json> getChatMemberCount(
+        std::int64_t chatId);
+    // 主动退出群（群主不能退，会返回 400）
+    boost::asio::awaitable<nlohmann::json> leaveChat(std::int64_t chatId);
     // 设置群默认权限（对所有非管理员生效）。需要 bot 有"限制成员"管理员
     // 权限，成功返回 true。permissions 形如 {{"can_send_messages", false}}
     boost::asio::awaitable<nlohmann::json> setChatPermissions(
@@ -164,17 +177,29 @@ public:
     // 设置客户端命令菜单（输入框旁 "/" 自动补全列表），启动时调用一次即可。
     // isEphemeral=true 的命令是 ephemeral command（Bot API 10.2+）：用户把它
     // 发到群里时，其他成员（和其他 bot）完全看不到这条命令消息
+    // scope 为空时走默认作用域（私聊 + 未被更具体作用域覆盖的群）。
+    // 群管机器人常用：
+    //   {{"type","all_group_chats"}}        对所有群成员
+    //   {{"type","all_chat_administrators"}} 只对群管理员
+    // 非空时 Telegram 会把它作为命令菜单的生效范围
     boost::asio::awaitable<nlohmann::json> setMyCommands(
-        const std::vector<BotCommand>& commands);
+        const std::vector<BotCommand>& commands,
+        const nlohmann::json& scope = nullptr);
     // 注册 webhook 投递地址。secretToken 非空时 Telegram 会带
     // X-Telegram-Bot-Api-Secret-Token 头投递，接收端必须校验。
     // 与 getUpdates 互斥；dropPendingUpdates=true 清空积压 updates
+    // allowedUpdates 非空时显式设置订阅类型（JSON 数组字符串）。不传会沿用
+    // 服务端上一次的设置，可能把 my_chat_member 之类静默过滤掉。
     boost::asio::awaitable<nlohmann::json> setWebhook(
         const std::string& url, const std::string& secretToken = "",
-        int maxConnections = 40, bool dropPendingUpdates = true);
+        int maxConnections = 40, bool dropPendingUpdates = true,
+        const std::string& allowedUpdates = "");
     // 取消 webhook，恢复可用 getUpdates 的状态
     boost::asio::awaitable<nlohmann::json> deleteWebhook(
         bool dropPendingUpdates = true);
+
+    // 清理发送限速器里超过 24h 没活动的按群槽位。
+    void pruneRateLimiter();
 
 private:
     std::string token_;

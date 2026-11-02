@@ -217,6 +217,12 @@ net::awaitable<json> BotClient::sendMessage(std::int64_t chatId,
     if (!options.replyMarkup.is_null()) {
         params.emplace("reply_markup", options.replyMarkup.dump());
     }
+    if (options.replyToMessageId != 0) {
+        json reply = {{"message_id", options.replyToMessageId},
+                      {"allow_sending_without_reply",
+                       options.allowSendingWithoutReply}};
+        params.emplace("reply_parameters", reply.dump());
+    }
     co_return co_await apiCall("sendMessage", std::move(params),
                                RetryPolicy::kNoTransportRetry);
 }
@@ -299,7 +305,7 @@ net::awaitable<json> BotClient::getChatMember(std::int64_t chatId,
 }
 
 net::awaitable<json> BotClient::setMyCommands(
-    const std::vector<BotCommand>& commands) {
+    const std::vector<BotCommand>& commands, const json& scope) {
     json arr = json::array();
     for (const auto& c : commands) {
         json item = {{"command", c.command}, {"description", c.description}};
@@ -308,14 +314,18 @@ net::awaitable<json> BotClient::setMyCommands(
         }
         arr.push_back(std::move(item));
     }
-    co_return co_await apiCall("setMyCommands", {{"commands", arr.dump()}},
+    std::map<std::string, std::string> params{{"commands", arr.dump()}};
+    if (!scope.is_null()) {
+        params.emplace("scope", scope.dump());
+    }
+    co_return co_await apiCall("setMyCommands", std::move(params),
                                RetryPolicy::kNoTransportRetry);
 }
 
-net::awaitable<json> BotClient::setWebhook(const std::string& url,
-                                          const std::string& secretToken,
-                                          int maxConnections,
-                                          bool dropPendingUpdates) {
+net::awaitable<json> BotClient::setWebhook(
+    const std::string& url, const std::string& secretToken,
+    int maxConnections, bool dropPendingUpdates,
+    const std::string& allowedUpdates) {
     std::map<std::string, std::string> params{
         {"url", url},
         {"max_connections", std::to_string(maxConnections)}};
@@ -324,6 +334,9 @@ net::awaitable<json> BotClient::setWebhook(const std::string& url,
     }
     if (dropPendingUpdates) {
         params.emplace("drop_pending_updates", "true");
+    }
+    if (!allowedUpdates.empty()) {
+        params.emplace("allowed_updates", allowedUpdates);
     }
     co_return co_await apiCall("setWebhook", std::move(params),
                                RetryPolicy::kNoTransportRetry);
@@ -340,14 +353,23 @@ net::awaitable<json> BotClient::deleteWebhook(bool dropPendingUpdates) {
 
 net::awaitable<json> BotClient::sendEphemeralMessage(
     std::int64_t chatId, const EphemeralMessageParameters& ephemeral,
-    const std::string& text, const json& replyMarkup) {
+    const std::string& text, const json& replyMarkup, ParseMode parseMode,
+    std::int64_t replyToMessageId) {
     co_await limiter_.beforeSend(chatId);
     std::map<std::string, std::string> params{
         {"chat_id", std::to_string(chatId)},
         {"text", text},
         {"ephemeral_message_parameters", ephemeralToJson(ephemeral).dump()}};
+    if (const char* mode = parseModeName(parseMode); mode != nullptr) {
+        params.emplace("parse_mode", mode);
+    }
     if (!replyMarkup.is_null()) {
         params.emplace("reply_markup", replyMarkup.dump());
+    }
+    if (replyToMessageId != 0) {
+        json reply = {{"message_id", replyToMessageId},
+                      {"allow_sending_without_reply", true}};
+        params.emplace("reply_parameters", reply.dump());
     }
     co_return co_await apiCall("sendMessage", std::move(params),
                                RetryPolicy::kNoTransportRetry);
@@ -403,6 +425,23 @@ net::awaitable<json> BotClient::getChat(std::int64_t chatId) {
                                {{"chat_id", std::to_string(chatId)}});
 }
 
+net::awaitable<json> BotClient::getChatAdministrators(std::int64_t chatId) {
+    co_return co_await apiCall("getChatAdministrators",
+                               {{"chat_id", std::to_string(chatId)}});
+}
+
+net::awaitable<json> BotClient::getChatMemberCount(std::int64_t chatId) {
+    co_return co_await apiCall("getChatMemberCount",
+                               {{"chat_id", std::to_string(chatId)}});
+}
+
+net::awaitable<json> BotClient::leaveChat(std::int64_t chatId) {
+    co_await limiter_.beforeSend(chatId);
+    co_return co_await apiCall("leaveChat",
+                               {{"chat_id", std::to_string(chatId)}},
+                               RetryPolicy::kNoTransportRetry);
+}
+
 net::awaitable<json> BotClient::setChatPermissions(
     std::int64_t chatId, const json& permissions) {
     co_await limiter_.beforeSend(chatId);
@@ -426,6 +465,11 @@ net::awaitable<json> BotClient::restrictChatMember(
     }
     co_return co_await apiCall("restrictChatMember", std::move(params),
                                RetryPolicy::kNoTransportRetry);
+}
+
+void BotClient::pruneRateLimiter() {
+    limiter_.pruneInactive(std::chrono::steady_clock::now() -
+                           std::chrono::hours{24});
 }
 
 }  // namespace tgbot

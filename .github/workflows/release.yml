@@ -14,6 +14,7 @@ on:
         options:
           - group_admin
           - echo_bot
+          - warden
           - both
       version:
         description: 版本号（如 0.0.1，会生成 tag <bot>-v<version> 或 v<version>）

@@ -109,6 +109,32 @@ void testCommandParsing() {
     CHECK(seen[2] == "ANY:hello");
 }
 
+void testCommandGuard() {
+    std::printf("test: command guard\n");
+    tgbot::BotClient bot("000000:TEST");
+    tgbot::Dispatcher dispatcher;
+
+    int calls = 0;
+    dispatcher.onCommand(
+        "admin", [&calls](tgbot::BotClient&, json) -> net::awaitable<void> {
+            ++calls;
+            co_return;
+        });
+
+    bool allow = false;
+    dispatcher.setCommandGuard(
+        [&allow](tgbot::BotClient&, json) -> net::awaitable<bool> {
+            co_return allow;
+        });
+
+    runDispatch(dispatcher, bot, makeTextMessage("/admin"));
+    CHECK(calls == 0);  // 守卫拒绝时 handler 不得执行
+
+    allow = true;
+    runDispatch(dispatcher, bot, makeTextMessage("/admin"));
+    CHECK(calls == 1);
+}
+
 void testCallbackPrefix() {
     std::printf("test: callback prefix matching\n");
     tgbot::BotClient bot("000000:TEST");
@@ -820,6 +846,7 @@ void testGrabRunner() {
 int main() {
     std::setvbuf(stdout, nullptr, _IONBF, 0);
     testCommandParsing();
+    testCommandGuard();
     testCallbackPrefix();
     testRateLimiterSpacing();
     testPermanentErrorClassifier();

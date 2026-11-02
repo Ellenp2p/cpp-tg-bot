@@ -11,12 +11,14 @@ framework/
 bincache.tar.gz
 vcpkg-commit.txt
 
-# 运行时状态（offset / SQLite），属于部署数据，不进版本库
+# 运行时状态（offset / SQLite / 日志），属于部署数据，不进版本库
 tg_bot.offset
 tg_bot.offset.tmp
+*.offset
 *.db
 *.db-wal
 *.db-shm
+logs/
 
 # 构建产物 / IDE
 *.exe
