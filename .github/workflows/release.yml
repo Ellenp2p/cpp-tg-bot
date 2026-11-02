@@ -92,7 +92,7 @@ jobs:
             exit 1
           fi
           case "$bot" in
-            both) bots="echo_bot group_admin" ;;
+            both) bots="echo_bot group_admin warden" ;;
             *)    bots="$bot" ;;
           esac
           for b in $bots; do
@@ -106,6 +106,7 @@ jobs:
           echo "bots=$bots  tag=$tag"
           echo "bots=$bots" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
 
       - name: Enable long paths (Windows)
         if: ${{ runner.os == 'Windows' }}
@@ -141,7 +142,8 @@ jobs:
             -DCMAKE_TOOLCHAIN_FILE="$PWD/.vcpkg/scripts/buildsystems/vcpkg.cmake" \
             -DVCPKG_OVERLAY_TRIPLETS="$PWD/triplets" \
             -DVCPKG_TARGET_TRIPLET=x64-linux-musl \
-            -DTGBOT_STATIC=ON
+            -DTGBOT_STATIC=ON \
+            -DWARDEN_VERSION:STRING="${{ steps.meta.outputs.version }}"
           # 只编译目标机器人（tgbot 库作为依赖自动编，另一个示例不编）
           cmake --build build --target ${{ steps.meta.outputs.bots }}
 
@@ -166,7 +168,8 @@ jobs:
           cmake -B build \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_TOOLCHAIN_FILE="$PWD/.vcpkg/scripts/buildsystems/vcpkg.cmake" \
-            -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }}
+            -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }} \
+            -DWARDEN_VERSION:STRING="${{ steps.meta.outputs.version }}"
           # 只编译目标机器人（tgbot 库作为依赖自动编，另一个示例不编）
           cmake --build build --config Release --target ${{ steps.meta.outputs.bots }}
 

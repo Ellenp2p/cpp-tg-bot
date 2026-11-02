@@ -17,7 +17,10 @@
 
 namespace warden {
 
-inline constexpr char kWardenVersion[] = "0.1.0";
+#ifndef WARDEN_VERSION
+#define WARDEN_VERSION "0.1.0"
+#endif
+inline constexpr char kWardenVersion[] = WARDEN_VERSION;
 
 inline std::string envOr(const char* name, std::string fallback = {}) {
     const char* v = std::getenv(name);
