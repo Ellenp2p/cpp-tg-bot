@@ -1,0 +1,33 @@
+[Unit]
+Description=Warden Telegram group manager
+Documentation=https://github.com/Ellenp2p/cpp-tg-bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=warden
+Group=warden
+WorkingDirectory=/var/lib/warden
+EnvironmentFile=/etc/warden/warden.env
+ExecStart=/opt/warden/warden
+Restart=always
+RestartSec=5
+TimeoutStopSec=25
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/warden
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LimitNOFILE=65535
+MemoryHigh=256M
+MemoryMax=512M
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=warden
+
+[Install]
+WantedBy=multi-user.target
