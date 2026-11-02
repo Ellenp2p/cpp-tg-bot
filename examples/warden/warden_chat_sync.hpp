@@ -16,6 +16,8 @@ inline ChatRecord recordFromChat(const json& chat, const json& member, std::int6
     r.canPin = creator || member.value("can_pin_messages", false);
     r.canInvite = creator || member.value("can_invite_users", false);
     r.canManage = creator || member.value("can_manage_chat", false);
+    // 新群默认开启；已有群的 enabled 不会被 saveChat 覆盖（见 store.cpp）。
+    r.enabled = true;
     r.joinedAt = now;
     r.lastSeenAt = now;
     r.refreshedAt = now;

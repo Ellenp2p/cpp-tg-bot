@@ -119,6 +119,12 @@ int runTests() {
     check(!parseDelay("abc").has_value(), "parse abc");
     check(!parseDelay("5x").has_value(), "parse 5x");
 
+    check(kindDefaultDelay("sticker") > 0, "sticker default delete");
+    check(kindDefaultDelay("photo") > 0, "photo default delete");
+    check(kindDefaultDelay("video") > 0, "video default delete");
+    check(kindDefaultDelay("voice") > 0, "voice default delete");
+    check(kindDefaultDelay("audio") == 0, "audio default keep");
+
     check(detectMediaKind(nlohmann::json{{"sticker", nlohmann::json::object()}}) == "sticker",
           "detect sticker");
     check(detectMediaKind(nlohmann::json{{"photo", nlohmann::json::array()}}) == "photo",
@@ -146,7 +152,7 @@ int runTests() {
         const auto chat = store.chat(-100);
         check(chat.has_value(), "ensureChat visible");
         check(chat->botStatus == "member", "ensureChat default status");
-        check(!chat->enabled, "new chat disabled by default");
+        check(chat->enabled, "new chat enabled by default");
     }
 
     ChatRecord record;

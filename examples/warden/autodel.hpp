@@ -310,6 +310,7 @@ inline net::awaitable<void> handleAutodel(BotClient& b,
             co_return;
         case AutodelAction::kReset:
             store.clearSettings(chatId);
+            store.setEnabled(chatId, true);
             store.audit(chatId, userId, "autodel.reset", "");
             co_await reply(
                 "已恢复默认时限（贴纸 60 秒，图片/视频/语音 5 分钟，"
