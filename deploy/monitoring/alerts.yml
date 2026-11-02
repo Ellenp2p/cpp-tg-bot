@@ -71,6 +71,15 @@ groups:
           summary: "Warden event loop is lagging"
           description: "Timer lag is above 500ms; check SQLite/logging/CPU."
 
+      - alert: WardenCpuHigh
+        expr: rate(warden_process_cpu_seconds_total[5m]) > 0.8
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Warden is using more than 80% of one CPU core"
+          description: "Check queue depth, event loop lag and SQLite latency."
+
       - alert: WardenMemoryHigh
         expr: warden_process_resident_memory_bytes > 200 * 1024 * 1024
         for: 10m

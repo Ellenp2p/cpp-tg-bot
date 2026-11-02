@@ -381,6 +381,12 @@ warden_deletions_pending
 
 # 进程 RSS
 warden_process_resident_memory_bytes
+
+# CPU：每秒 CPU 秒数 → 单核百分比
+rate(warden_process_cpu_seconds_total[1m]) * 100
+
+# event loop 卡顿
+warden_event_loop_lag_seconds
 ```
 
 指标包括：
