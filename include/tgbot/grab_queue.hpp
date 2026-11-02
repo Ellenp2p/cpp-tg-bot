@@ -86,7 +86,10 @@ public:
     using Render =
         std::function<boost::asio::awaitable<void>(std::vector<GrabResult>)>;
 
-    explicit GrabRunner(Options options = {});
+    // 注意：不能写 Options options = {}（GCC/clang 不允许嵌套类型的默认成员
+    // 初始化器作默认实参），所以拆成两个重载
+    GrabRunner();
+    explicit GrabRunner(Options options);
 
     // 把队列里已接收的请求全部处理掉，按 seq 顺序分批渲染。
     // 返回处理条数。

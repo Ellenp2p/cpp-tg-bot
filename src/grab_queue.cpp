@@ -51,6 +51,8 @@ void GrabQueue::close() { closed_ = true; }
 
 void GrabQueue::resetClosed() { closed_ = false; }
 
+GrabRunner::GrabRunner() : GrabRunner(Options{}) {}
+
 GrabRunner::GrabRunner(Options options) : options_(options) {
     if (options_.maxInFlight == 0) {
         options_.maxInFlight = 1;
