@@ -1,6 +1,7 @@
 // Warden 持久层 + 纯函数的最小回归测试（不依赖网络/Telegram）。
 // 重点验证：删除任务的 claim/finish/崩溃恢复、设置缓存、管理员名册。
 
+#include <tgbot/metrics.hpp>
 #include "../src/chat_dispatch_util.hpp"
 #include "commands.hpp"
 #include "delete_result.hpp"
@@ -82,6 +83,16 @@ void testHealthServer() {
     check(statusOf(postDrain("secret")) == 202, "drain token 202");
     check(draining.load(), "drain sets flag");
     check(statusOf(get("/readyz")) == 503, "readyz 503 after drain");
+    tgbot::metrics::observeUpdateWait(0.1);
+    const auto metrics = get("/metrics");
+    check(statusOf(metrics) == 200, "metrics 200");
+    check(metrics.find("warden_update_queue_depth") != std::string::npos,
+          "metrics exposes queue gauge");
+    check(metrics.find("warden_telegram_requests_total") != std::string::npos,
+          "metrics exposes telegram counter");
+    check(metrics.find("# TYPE warden_update_queue_depth gauge") != std::string::npos,
+          "metrics has prometheus type");
+    check(metrics.find("le=\"+Inf\"") != std::string::npos, "metrics has histogram buckets");
 
     io.stop();
     thread.join();

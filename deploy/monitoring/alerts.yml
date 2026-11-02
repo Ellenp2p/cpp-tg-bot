@@ -1,0 +1,81 @@
+groups:
+  - name: warden
+    rules:
+      - alert: WardenDown
+        expr: up{job="warden"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Warden metrics endpoint is down"
+          description: "Prometheus has not scraped Warden for 2 minutes."
+
+      - alert: WardenQueueSaturation
+        expr: |
+          warden_update_queue_depth / warden_update_queue_capacity > 0.8
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Warden update queue is above 80%"
+          description: "Queue depth {{ $value | humanizePercentage }} of capacity."
+
+      - alert: WardenBackpressure
+        expr: |
+          sum(rate(warden_updates_rejected_total[5m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Warden is rejecting updates"
+          description: "Updates are being rejected because the bounded queue is full."
+
+      - alert: WardenTelegramErrorRate
+        expr: |
+          sum(rate(warden_telegram_errors_total[5m]))
+          /
+          clamp_min(sum(rate(warden_telegram_requests_total[5m])), 0.001)
+          > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Warden Telegram API error rate above 5%"
+          description: "Check token, permissions and Telegram API status."
+
+      - alert: WardenTelegram429
+        expr: |
+          sum(rate(warden_telegram_429_total[5m])) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Warden is being rate limited by Telegram"
+          description: "More than one 429 per second over 5 minutes."
+
+      - alert: WardenDeletionBacklog
+        expr: warden_deletions_pending > 1000
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Warden deletion backlog is growing"
+          description: "{{ $value }} deletion jobs are pending."
+
+      - alert: WardenEventLoopLag
+        expr: warden_event_loop_lag_seconds > 0.5
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Warden event loop is lagging"
+          description: "Timer lag is above 500ms; check SQLite/logging/CPU."
+
+      - alert: WardenMemoryHigh
+        expr: warden_process_resident_memory_bytes > 200 * 1024 * 1024
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Warden RSS is above 200MB"
+          description: "Check queue depth and cache size; a stable high-water mark is expected after a peak."

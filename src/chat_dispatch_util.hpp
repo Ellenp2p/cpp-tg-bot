@@ -11,6 +11,7 @@
 
 #include <tgbot/bot_client.hpp>
 #include <tgbot/dispatcher.hpp>
+#include <tgbot/metrics.hpp>
 #include <tgbot/util.hpp>
 
 #include <nlohmann/json.hpp>
@@ -33,6 +34,22 @@
 
 namespace tgbot {
 namespace detail {
+
+inline std::string_view updateTypeOf(const nlohmann::json& update) {
+    if (update.contains("message")) {
+        return "message";
+    }
+    if (update.contains("callback_query")) {
+        return "callback_query";
+    }
+    if (update.contains("my_chat_member")) {
+        return "my_chat_member";
+    }
+    if (update.contains("chat_member")) {
+        return "chat_member";
+    }
+    return "other";
+}
 
 inline std::int64_t chatIdOf(const nlohmann::json& update) {
     const auto chatIdIn = [](const nlohmann::json& j) -> std::int64_t {
@@ -75,6 +92,9 @@ public:
                            std::size_t maxPendingBytes = 32 * 1024 * 1024)
         : state_(std::make_shared<State>(std::move(executor), maxPending, maxPendingBytes)) {
         const auto count = std::max(1, workers);
+        metrics::setWorkerCount(count);
+        metrics::setUpdateQueueCapacity(static_cast<double>(maxPending),
+                                        static_cast<double>(maxPendingBytes));
         for (int i = 0; i < count; ++i) {
             boost::asio::co_spawn(
                 state_->executor,
@@ -93,7 +113,14 @@ public:
 
     // 返回 false = 队列已满，调用方必须背压（webhook 503 / 长轮询暂停）。
     bool dispatch(const nlohmann::json& update, BotClient& bot, Dispatcher& dispatcher) {
-        if (!state_->accepting || state_->pending >= state_->maxPending) {
+        const auto type = updateTypeOf(update);
+        metrics::updateReceived(type);
+        if (!state_->accepting) {
+            metrics::updateRejected("shutting_down");
+            return false;
+        }
+        if (state_->pending >= state_->maxPending) {
+            metrics::updateRejected("queue_full");
             return false;
         }
         // 仅限制条数不够：一条 1MB 的 update × 2000 会撑爆内存。
@@ -101,13 +128,18 @@ public:
         const auto bytes = update.dump().size();
         if (bytes > state_->maxPendingBytes ||
             state_->pendingBytes > state_->maxPendingBytes - bytes) {
+            metrics::updateRejected("bytes_full");
             return false;
         }
         const auto chatId = chatIdOf(update);
         auto& lane = state_->lanes[chatId];
-        lane.pending.push_back(Job{update, &dispatcher, &bot, bytes});
+        lane.pending.push_back(Job{
+            update, &dispatcher, &bot, bytes, std::string{type}, std::chrono::steady_clock::now()});
         ++state_->pending;
         state_->pendingBytes += bytes;
+        metrics::updateAccepted();
+        metrics::setUpdateQueue(static_cast<double>(state_->pending),
+                                static_cast<double>(state_->pendingBytes));
         // 入队即计入 in-flight，保证 drain 不会在队列还有任务时提前退出。
         dispatcher.beginUpdate();
         if (!lane.active) {
@@ -126,6 +158,8 @@ private:
         Dispatcher* dispatcher;
         BotClient* bot;
         std::size_t bytes;
+        std::string type;
+        std::chrono::steady_clock::time_point enqueuedAt;
     };
 
     struct Lane {
@@ -168,7 +202,14 @@ private:
             laneIt->second.pending.pop_front();
             --state->pending;
             state->pendingBytes -= job.bytes;
+            metrics::setUpdateQueue(static_cast<double>(state->pending),
+                                    static_cast<double>(state->pendingBytes));
+            metrics::observeUpdateWait(
+                std::chrono::duration<double>(std::chrono::steady_clock::now() - job.enqueuedAt)
+                    .count());
 
+            const auto handleStarted = std::chrono::steady_clock::now();
+            metrics::workerBusy(1);
             try {
                 co_await job.dispatcher->dispatch(std::move(job.update), *job.bot);
             } catch (const std::exception& e) {
@@ -176,6 +217,11 @@ private:
             } catch (...) {
                 spdlog::error("update dispatch failed: unknown exception");
             }
+            metrics::workerBusy(-1);
+            metrics::observeUpdateHandle(
+                job.type,
+                std::chrono::duration<double>(std::chrono::steady_clock::now() - handleStarted)
+                    .count());
             job.dispatcher->endUpdate();
 
             // job 执行期间可能有新 update 入队；重新查，别持有引用跨 co_await。

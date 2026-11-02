@@ -2,6 +2,7 @@
 
 #include "delete_result.hpp"
 
+#include <tgbot/metrics.hpp>
 #include <tgbot/util.hpp>
 
 #include <boost/asio/co_spawn.hpp>
@@ -33,6 +34,7 @@ DeleteScheduler::DeleteScheduler(tgbot::BotClient& bot, Store& store, Options op
     : bot_(bot), store_(store), options_(std::move(options)) {}
 
 void DeleteScheduler::start(const net::any_io_executor& executor) {
+    tgbot::metrics::setDeletionsPending(store_.pendingDeletions());
     auto self = shared_from_this();
     net::co_spawn(
         executor,
@@ -142,6 +144,10 @@ net::awaitable<void> DeleteScheduler::deleteOne(DeletionJob job) {
         co_return;
     }
 
+    if (job.dueAt > 0) {
+        tgbot::metrics::observeDeletionDueLag(
+            std::max<double>(0, static_cast<double>(nowSeconds() - job.dueAt)));
+    }
     co_await pace(job.chatId);
 
     // pace 会睡到节流槽位；睡眠期间可能刚被置顶，醒来再查一次。
@@ -155,6 +161,7 @@ net::awaitable<void> DeleteScheduler::deleteOne(DeletionJob job) {
 
     bool finished = false;
     bool failed = false;
+    bool gone = false;
     std::string error;
 
     try {
@@ -173,6 +180,7 @@ net::awaitable<void> DeleteScheduler::deleteOne(DeletionJob job) {
         if (e.errorCode == 400 && deleteErrorMeansGone(e.what())) {
             // 用户/管理员已经删了，或超过 48h 删除窗口：任务完成
             finished = true;
+            gone = true;
             spdlog::debug("message already gone: chat={} msg={}", job.chatId, job.messageId);
         } else if (e.errorCode == 400 || e.errorCode == 403) {
             failed = true;
@@ -184,12 +192,14 @@ net::awaitable<void> DeleteScheduler::deleteOne(DeletionJob job) {
 
     if (finished) {
         store_.finishDeletion(job.chatId, job.messageId, true, error);
+        tgbot::metrics::deletionFinished(gone ? "gone" : "ok");
         spdlog::debug("deleted {}: chat={} msg={}", job.kind, job.chatId, job.messageId);
         co_return;
     }
 
     if (failed) {
         store_.finishDeletion(job.chatId, job.messageId, false, error);
+        tgbot::metrics::deletionFinished("failed");
         spdlog::warn("delete permanently failed: chat={} msg={} kind={}: {}",
                      job.chatId,
                      job.messageId,
@@ -211,6 +221,7 @@ net::awaitable<void> DeleteScheduler::deleteOne(DeletionJob job) {
     // 瞬态失败：指数退避，最多 maxAttempts 次
     if (job.attempts + 1 >= options_.maxAttempts) {
         store_.finishDeletion(job.chatId, job.messageId, false, error);
+        tgbot::metrics::deletionFinished("failed");
         spdlog::warn(
             "delete gave up after {} attempts: chat={} msg={} "
             "kind={}: {}",
@@ -233,6 +244,7 @@ net::awaitable<void> DeleteScheduler::deleteOne(DeletionJob job) {
 
     const auto backoff = std::min<std::int64_t>(300, std::int64_t{5} * (job.attempts + 1));
     store_.retryDeletion(job.chatId, job.messageId, nowSeconds() + backoff, error);
+    tgbot::metrics::deletionFinished("retry");
     spdlog::warn(
         "delete retry in {}s: chat={} msg={}: {}", backoff, job.chatId, job.messageId, error);
 }
@@ -285,9 +297,10 @@ net::awaitable<void> DeleteScheduler::janitorLoop() {
                 }
             }
 
-            spdlog::info("delete janitor: pending={}, failed={}",
-                         store_.pendingDeletions(),
-                         store_.failedDeletions());
+            const auto pending = store_.pendingDeletions();
+            tgbot::metrics::setDeletionsPending(pending);
+            spdlog::info(
+                "delete janitor: pending={}, failed={}", pending, store_.failedDeletions());
         } catch (const std::exception& e) {
             spdlog::warn("delete janitor failed: {}", e.what());
         }

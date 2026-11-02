@@ -1,5 +1,7 @@
 #include "health.hpp"
 
+#include <tgbot/metrics.hpp>
+
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
 #include <boost/asio/redirect_error.hpp>
@@ -88,8 +90,14 @@ net::awaitable<void> HealthServer::session(net::ip::tcp::socket socket) {
 
         http::status status = http::status::ok;
         std::string body;
+        std::string contentType = "application/json; charset=utf-8";
 
-        if (req.method() == http::verb::get && req.target() == "/healthz") {
+        if (req.method() == http::verb::get && req.target() == "/metrics") {
+            tgbot::metrics::setDeletionsPending(store_.pendingDeletions());
+            tgbot::metrics::setActiveChats(store_.countChats(true));
+            body = tgbot::metrics::render();
+            contentType = "text/plain; version=0.0.4; charset=utf-8";
+        } else if (req.method() == http::verb::get && req.target() == "/healthz") {
             body = json{{"ok", true},
                         {"instance", instanceId_},
                         {"version", version_},
@@ -126,7 +134,7 @@ net::awaitable<void> HealthServer::session(net::ip::tcp::socket socket) {
 
         http::response<http::string_body> res{status, req.version()};
         res.set(http::field::server, "warden-health");
-        res.set(http::field::content_type, "application/json");
+        res.set(http::field::content_type, contentType);
         res.set(http::field::cache_control, "no-store");
         res.keep_alive(false);
         res.body() = std::move(body);

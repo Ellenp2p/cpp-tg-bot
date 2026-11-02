@@ -1,4 +1,5 @@
 #include <tgbot/dispatcher.hpp>
+#include <tgbot/metrics.hpp>
 
 #include <spdlog/spdlog.h>
 
@@ -136,6 +137,7 @@ boost::asio::awaitable<void> Dispatcher::dispatch(json update, BotClient& bot) {
             }
         }
         if (const auto it = commands_.find(command); it != commands_.end()) {
+            metrics::command(command);
             if (suffixAt != std::string::npos) {
                 // 保留“这条命令明确 @ 了本 bot”的标记，供 handler/guard
                 // 区分“/cmd”和“/cmd@ThisBot”。

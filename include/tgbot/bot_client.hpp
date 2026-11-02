@@ -206,6 +206,11 @@ public:
     void pruneRateLimiter();
 
 private:
+    boost::asio::awaitable<nlohmann::json> apiCallImpl(const std::string& method,
+                                                       std::map<std::string, std::string> params,
+                                                       RetryPolicy policy,
+                                                       std::chrono::seconds ioTimeout);
+
     std::string token_;
     RateLimiter limiter_; // 发送限速（单 io_context 线程内无锁）
 };
