@@ -101,7 +101,7 @@ Store::Store(const std::string& path) {
         " can_pin INTEGER NOT NULL DEFAULT 0,"
         " can_invite INTEGER NOT NULL DEFAULT 0,"
         " can_manage INTEGER NOT NULL DEFAULT 0,"
-        " enabled INTEGER NOT NULL DEFAULT 0,"
+        " enabled INTEGER NOT NULL DEFAULT 1,"
         " joined_at INTEGER NOT NULL DEFAULT 0,"
         " left_at INTEGER NOT NULL DEFAULT 0,"
         " last_seen_at INTEGER NOT NULL DEFAULT 0,"
@@ -194,8 +194,8 @@ void Store::ensureChat(std::int64_t chatId, std::string type, std::string title,
     // 命令/消息能到达就说明机器人现在确实在群里
     Stmt stmt(db_,
               "INSERT INTO chats"
-              "(chat_id,type,title,bot_status,joined_at,last_seen_at)"
-              " VALUES(?,?,?,'member',?,?)"
+              "(chat_id,type,title,bot_status,enabled,joined_at,last_seen_at)"
+              " VALUES(?,?,?,'member',1,?,?)"
               " ON CONFLICT(chat_id) DO UPDATE SET"
               " left_at=0, last_seen_at=excluded.last_seen_at");
     stmt.bind(1, chatId);
@@ -226,7 +226,6 @@ void Store::saveChat(const ChatRecord& r) {
         " can_pin=excluded.can_pin,"
         " can_invite=excluded.can_invite,"
         " can_manage=excluded.can_manage,"
-        " enabled=CASE WHEN excluded.enabled=1 THEN 1 ELSE chats.enabled END,"
         " joined_at=CASE WHEN chats.joined_at=0 THEN excluded.joined_at ELSE chats.joined_at END,"
         " left_at=excluded.left_at,"
         " last_seen_at=MAX(chats.last_seen_at, excluded.last_seen_at),"

@@ -36,7 +36,8 @@ inline std::string_view kindLabel(std::string_view kind) {
 }
 
 // 默认时限（秒）：0 = 默认不删除。
-// 只给用户点名要的四类默认值，其余默认关，避免一开机器人就误删。
+// 贴纸/图片/视频/语音默认删；audio（音乐/音频文件）不是 voice，
+// 默认关，需要时用 /autodel audio 5m 单独打开。
 inline int kindDefaultDelay(std::string_view kind) {
     if (kind == "sticker")
         return 60;
