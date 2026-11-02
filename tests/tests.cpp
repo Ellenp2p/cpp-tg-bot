@@ -8,10 +8,12 @@
 
 #include <tgbot/bot_client.hpp>
 #include <tgbot/dispatcher.hpp>
+#include <tgbot/grab_queue.hpp>
 #include <tgbot/job_queue.hpp>
 #include <tgbot/lottery_panel.hpp>
 #include <tgbot/panel.hpp>
 #include <tgbot/rate_limiter.hpp>
+#include <tgbot/util.hpp>
 #include <tgbot/amount.hpp>
 #include <tgbot/chain_health.hpp>
 #include <tgbot/reconciliation.hpp>
@@ -725,6 +727,94 @@ void testReconciler() {
     CHECK(ledger->get(c)->state == "stuck");
 }
 
+void testGrabQueue() {
+    std::printf("test: 抢红包队列（容量/去重/顺序/关闭）\n");
+
+    tgbot::GrabQueue queue(3);
+    CHECK(queue.capacity() == 3);
+
+    CHECK(queue.submit(1, "@a") == tgbot::GrabQueue::Accept::kAccepted);
+    CHECK(queue.submit(2, "@b") == tgbot::GrabQueue::Accept::kAccepted);
+    CHECK(queue.submit(1, "@a") == tgbot::GrabQueue::Accept::kDuplicate);
+    CHECK(queue.submit(3, "@c") == tgbot::GrabQueue::Accept::kAccepted);
+    // 第 4 个人：名额已满，当场拒绝（不让他白花手续费）
+    CHECK(queue.submit(4, "@d") == tgbot::GrabQueue::Accept::kFull);
+    CHECK(queue.accepted() == 3);
+
+    // FIFO，seq 递增
+    const auto first = queue.pop();
+    CHECK(first.has_value() && first->userId == 1 && first->seq == 1);
+    const auto second = queue.pop();
+    CHECK(second.has_value() && second->userId == 2 && second->seq == 2);
+    const auto third = queue.pop();
+    CHECK(third.has_value() && third->userId == 3 && third->seq == 3);
+    CHECK(!queue.pop().has_value());
+
+    // 关闭后一律拒绝
+    tgbot::GrabQueue closed(5);
+    closed.close();
+    CHECK(closed.submit(9) == tgbot::GrabQueue::Accept::kClosed);
+}
+
+void testGrabRunner() {
+    std::printf("test: 抢红包批量执行（并发上限 + 顺序渲染）\n");
+
+    tgbot::GrabQueue queue(10);
+    for (std::int64_t i = 0; i < 10; ++i) {
+        CHECK(queue.submit(i + 100, "@u" + std::to_string(i)) ==
+              tgbot::GrabQueue::Accept::kAccepted);
+    }
+
+    int inFlight = 0;
+    int maxInFlight = 0;
+    std::vector<std::uint64_t> renderedSeq;
+
+    tgbot::GrabRunner runner(tgbot::GrabRunner::Options{5});
+    const auto submit =
+        [&](tgbot::GrabRequest request) -> boost::asio::awaitable<tgbot::GrabResult> {
+        ++inFlight;
+        maxInFlight = std::max(maxInFlight, inFlight);
+        // 让后提交的反而先完成，验证"按 seq 渲染"
+        co_await tgbot::co_sleep(std::chrono::milliseconds{20 - request.seq * 2});
+        --inFlight;
+
+        tgbot::GrabResult result;
+        result.seq = request.seq;
+        result.userId = request.userId;
+        result.ok = true;
+        result.detail = "10";
+        result.fromNetwork = true;
+        co_return result;
+    };
+    const auto render = [&](std::vector<tgbot::GrabResult> results)
+        -> boost::asio::awaitable<void> {
+        for (const auto& result : results) {
+            renderedSeq.push_back(result.seq);
+            CHECK(result.ok);
+        }
+        co_return;
+    };
+
+    std::size_t processed = 0;
+    boost::asio::io_context io;
+    boost::asio::co_spawn(
+        io,
+        [&]() -> boost::asio::awaitable<void> {
+            processed = co_await runner.drain(queue, submit, render);
+        },
+        boost::asio::detached);
+    io.run();
+
+    CHECK(processed == 10);
+    CHECK(renderedSeq.size() == 10);
+    // 渲染顺序必须严格递增（等于点击顺序）
+    for (std::size_t i = 1; i < renderedSeq.size(); ++i) {
+        CHECK(renderedSeq[i] > renderedSeq[i - 1]);
+    }
+    // 并发不超过配置上限
+    CHECK(maxInFlight <= 5);
+    CHECK(maxInFlight >= 2);  // 确实并发了
+}
 }  // namespace
 
 int main() {
@@ -742,6 +832,8 @@ int main() {
     testBatchRefund();
     testChainMonitor();
     testReconciler();
+    testGrabQueue();
+    testGrabRunner();
 
     std::printf("\n%d checks, %d failed\n", g_checks, g_failed);
     return g_failed == 0 ? 0 : 1;

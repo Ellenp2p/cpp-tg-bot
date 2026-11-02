@@ -19,6 +19,7 @@
 #include <tgbot/bot_client.hpp>
 #include <tgbot/chain_health.hpp>
 #include <tgbot/dispatcher.hpp>
+#include <tgbot/grab_queue.hpp>
 #include <tgbot/job_queue.hpp>
 #include <tgbot/long_poll.hpp>
 #include <tgbot/lottery_panel.hpp>

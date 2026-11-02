@@ -38,6 +38,7 @@ add_library(tgbot STATIC
     src/bot_client.cpp
     src/chain_health.cpp
     src/dispatcher.cpp
+    src/grab_queue.cpp
     src/job_queue.cpp
     src/long_poll.cpp
     src/lottery_panel.cpp
