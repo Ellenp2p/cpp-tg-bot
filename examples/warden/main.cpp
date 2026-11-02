@@ -759,8 +759,10 @@ net::awaitable<int> run(Config cfg) {
         });
 
     // ---- 接收模式 ----
-    spdlog::info(
-        "update queue: workers={}, maxPending={}", cfg.updateWorkers, cfg.maxPendingUpdates);
+    spdlog::info("update queue: workers={}, maxPending={}, maxPendingBytes={}MB",
+                 cfg.updateWorkers,
+                 cfg.maxPendingUpdates,
+                 cfg.maxPendingMB);
     if (cfg.useWebhook) {
         spdlog::info("webhook mode: {} (listen {}:{})",
                      cfg.webhook.publicUrl,
@@ -773,6 +775,7 @@ net::awaitable<int> run(Config cfg) {
         opts.dropPendingUpdates = cfg.dropPendingUpdates;
         opts.pollTimeoutSeconds = cfg.pollTimeoutSeconds;
         opts.maxPendingUpdates = static_cast<std::size_t>(cfg.maxPendingUpdates);
+        opts.maxPendingBytes = static_cast<std::size_t>(cfg.maxPendingMB) * 1024 * 1024;
         opts.updateWorkers = cfg.updateWorkers;
         // 不订阅 my_chat_member 就永远不知道被拉进/踢出了哪些群
         opts.allowedUpdates = R"(["message","callback_query","my_chat_member"])";

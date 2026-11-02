@@ -92,6 +92,7 @@ struct Config {
 
     // 有界 update 队列 + 固定 worker 协程；满了长轮询暂停 / webhook 回 503
     int maxPendingUpdates = 2000;
+    int maxPendingMB = 32; // update 队列的字节上限，防止大 JSON 撑爆内存
     int updateWorkers = 8;
 
     // 机器人回复的自动清理时间（秒）；0 = 不自动删
@@ -178,6 +179,7 @@ inline Config loadConfig(int argc, char** argv) {
     cfg.replyTtlSec = std::clamp(envInt("WARDEN_REPLY_TTL", cfg.replyTtlSec), 0, 3600);
     cfg.maxPendingUpdates =
         std::clamp(envInt("WARDEN_MAX_PENDING", cfg.maxPendingUpdates), 100, 100000);
+    cfg.maxPendingMB = std::clamp(envInt("WARDEN_MAX_PENDING_MB", cfg.maxPendingMB), 1, 512);
     cfg.updateWorkers = std::clamp(envInt("WARDEN_UPDATE_WORKERS", cfg.updateWorkers), 1, 64);
     cfg.groupMenus = envFlag("WARDEN_GROUP_MENUS", true);
 
@@ -202,6 +204,7 @@ inline Config loadConfig(int argc, char** argv) {
         cfg.webhook.tlsKey = envOr("WEBHOOK_TLS_KEY");
         cfg.webhook.maxConnections = std::clamp(envInt("WEBHOOK_MAX_CONNECTIONS", 40), 1, 100);
         cfg.webhook.maxPendingUpdates = static_cast<std::size_t>(cfg.maxPendingUpdates);
+        cfg.webhook.maxPendingBytes = static_cast<std::size_t>(cfg.maxPendingMB) * 1024 * 1024;
         cfg.webhook.updateWorkers = cfg.updateWorkers;
         cfg.webhook.dropPendingUpdates = cfg.dropPendingUpdates;
         cfg.webhook.registerOnStart = !envFlag("TG_WEBHOOK_SKIP_REGISTER", false);

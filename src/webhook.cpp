@@ -290,8 +290,8 @@ net::awaitable<void> webhookLoop(BotClient& bot,
     acceptor->listen(net::socket_base::max_listen_connections);
 
     // strand 表在整个 webhook 生命周期内共享（与长轮询同一套按 chat 串行语义）
-    auto updateWorkers =
-        std::make_shared<detail::UpdateWorkers>(executor, cfg.maxPendingUpdates, cfg.updateWorkers);
+    auto updateWorkers = std::make_shared<detail::UpdateWorkers>(
+        executor, cfg.maxPendingUpdates, cfg.updateWorkers, cfg.maxPendingBytes);
 
     net::co_spawn(
         executor,

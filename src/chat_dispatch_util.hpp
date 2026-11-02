@@ -71,8 +71,9 @@ class UpdateWorkers {
 public:
     explicit UpdateWorkers(boost::asio::any_io_executor executor,
                            std::size_t maxPending = 2000,
-                           int workers = 8)
-        : state_(std::make_shared<State>(std::move(executor), maxPending)) {
+                           int workers = 8,
+                           std::size_t maxPendingBytes = 32 * 1024 * 1024)
+        : state_(std::make_shared<State>(std::move(executor), maxPending, maxPendingBytes)) {
         const auto count = std::max(1, workers);
         for (int i = 0; i < count; ++i) {
             boost::asio::co_spawn(
@@ -95,10 +96,18 @@ public:
         if (!state_->accepting || state_->pending >= state_->maxPending) {
             return false;
         }
+        // 仅限制条数不够：一条 1MB 的 update × 2000 会撑爆内存。
+        // dump 只用于算大小，临时字符串立刻释放，不进入队列。
+        const auto bytes = update.dump().size();
+        if (bytes > state_->maxPendingBytes ||
+            state_->pendingBytes > state_->maxPendingBytes - bytes) {
+            return false;
+        }
         const auto chatId = chatIdOf(update);
         auto& lane = state_->lanes[chatId];
-        lane.pending.push_back(Job{update, &dispatcher, &bot});
+        lane.pending.push_back(Job{update, &dispatcher, &bot, bytes});
         ++state_->pending;
+        state_->pendingBytes += bytes;
         // 入队即计入 in-flight，保证 drain 不会在队列还有任务时提前退出。
         dispatcher.beginUpdate();
         if (!lane.active) {
@@ -116,6 +125,7 @@ private:
         nlohmann::json update;
         Dispatcher* dispatcher;
         BotClient* bot;
+        std::size_t bytes;
     };
 
     struct Lane {
@@ -124,14 +134,16 @@ private:
     };
 
     struct State {
-        State(boost::asio::any_io_executor ex, std::size_t maxPending)
-            : executor(std::move(ex)), maxPending(maxPending) {}
+        State(boost::asio::any_io_executor ex, std::size_t maxPending, std::size_t maxPendingBytes)
+            : executor(std::move(ex)), maxPending(maxPending), maxPendingBytes(maxPendingBytes) {}
 
         boost::asio::any_io_executor executor;
         std::unordered_map<std::int64_t, Lane> lanes;
         std::deque<std::int64_t> ready;
         std::size_t pending = 0;
+        std::size_t pendingBytes = 0;
         std::size_t maxPending = 2000;
+        std::size_t maxPendingBytes = 32 * 1024 * 1024;
         bool accepting = true;
     };
 
@@ -155,6 +167,7 @@ private:
             Job job = std::move(laneIt->second.pending.front());
             laneIt->second.pending.pop_front();
             --state->pending;
+            state->pendingBytes -= job.bytes;
 
             try {
                 co_await job.dispatcher->dispatch(std::move(job.update), *job.bot);

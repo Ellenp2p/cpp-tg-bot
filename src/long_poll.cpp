@@ -157,7 +157,8 @@ net::awaitable<void> longPollLoopImpl(BotClient& bot,
     // 有界队列 + per-chat lane + 固定 worker：同一聊天的 update 串行，
     // 不同聊天由多个 worker 并发；全部在同一个 io_context 线程，无锁。
     // 与 webhook 模式共用 detail::UpdateWorkers（src/chat_dispatch_util.hpp）。
-    detail::UpdateWorkers updateWorkers(executor, opts.maxPendingUpdates, opts.updateWorkers);
+    detail::UpdateWorkers updateWorkers(
+        executor, opts.maxPendingUpdates, opts.updateWorkers, opts.maxPendingBytes);
 
     while (true) {
         if (shuttingDown != nullptr && shuttingDown->load()) {

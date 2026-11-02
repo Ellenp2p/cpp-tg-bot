@@ -376,7 +376,7 @@ worker 是**协程池**，不是 OS 线程池：网络等待本来就是异步�
 
 | 对象 | 上限 / 回收 |
 |---|---|
-| update ingress | `WARDEN_MAX_PENDING`（默认 2000），满了长轮询暂停 / webhook 503 |
+| update ingress | `WARDEN_MAX_PENDING`（默认 2000）和 `WARDEN_MAX_PENDING_MB`（默认 32MB）双上限；满了长轮询暂停 / webhook 503 |
 | per-chat lane | lane 空了立即 erase；只保留有积压的 chat |
 | worker | `WARDEN_UPDATE_WORKERS`（默认 8）固定数量协程 |
 | 群设置缓存 | LRU 4096 个群；淘汰后下次访问从 SQLite 重载 |
@@ -428,7 +428,8 @@ Base64）；Discord 只发 `content`，超过 1800 字符会按 UTF-8 安全截�
 | `WARDEN_OFFSET_FILE` | `warden.offset` | 长轮询 offset |
 | `WARDEN_MODE` | `auto` | `auto/poll/webhook` |
 | `WARDEN_DROP_PENDING` | `false` | `true` = 启动丢弃积压（停机即停止）；`false` = 续传 |
-| `WARDEN_MAX_PENDING` | `2000` | update 队列上限（100–100000）；满了长轮询暂停 / webhook 503 |
+| `WARDEN_MAX_PENDING` | `2000` | update 队列条数上限（100–100000）；满了长轮询暂停 / webhook 503 |
+| `WARDEN_MAX_PENDING_MB` | `32` | update 队列字节上限（1–512MB），防止大 JSON 撑爆内存 |
 | `WARDEN_UPDATE_WORKERS` | `8` | update worker 协程数（1–64） |
 | `WARDEN_DELETE_WORKERS` | `4` | 删除并发协程数（1–32） |
 | `WARDEN_DELETE_GLOBAL_MS` | `34` | 全局删除最小间隔（≈30/s） |
