@@ -25,15 +25,13 @@ public:
         std::string grabLabel = "🧧 抢红包";
         bool creatorCanGrab = false;
         bool showList = true;
-        std::uint32_t seed = 0;  // 0 = 随机；测试可固定
+        std::uint32_t seed = 0; // 0 = 随机；测试可固定
     };
 
     // 注意：不能写成 Options options = {}，GCC/clang 在类内不允许用嵌套类型的
     // 默认成员初始化器当默认实参（MSVC 会放过），所以拆成两个重载
-    RedPacketPanel(std::shared_ptr<RedPacketLedger> ledger,
-                   std::int64_t packetId);
-    RedPacketPanel(std::shared_ptr<RedPacketLedger> ledger,
-                   std::int64_t packetId, Options options);
+    RedPacketPanel(std::shared_ptr<RedPacketLedger> ledger, std::int64_t packetId);
+    RedPacketPanel(std::shared_ptr<RedPacketLedger> ledger, std::int64_t packetId, Options options);
 
     std::string_view type() const override { return "red_packet"; }
     PanelView render() const override;
@@ -54,4 +52,4 @@ private:
     mutable std::mt19937 rng_;
 };
 
-}  // namespace tgbot
+} // namespace tgbot

@@ -16,9 +16,7 @@ namespace tgbot {
 namespace {
 
 std::int64_t toSeconds(std::chrono::system_clock::time_point tp) {
-    return std::chrono::duration_cast<std::chrono::seconds>(
-               tp.time_since_epoch())
-        .count();
+    return std::chrono::duration_cast<std::chrono::seconds>(tp.time_since_epoch()).count();
 }
 
 std::int64_t nowSeconds() {
@@ -35,8 +33,7 @@ class Statement {
 public:
     explicit Statement(sqlite3* db, const char* sql) {
         if (sqlite3_prepare_v2(db, sql, -1, &stmt_, nullptr) != SQLITE_OK) {
-            throw std::runtime_error(std::string{"sqlite prepare failed: "} +
-                                     sqlite3_errmsg(db));
+            throw std::runtime_error(std::string{"sqlite prepare failed: "} + sqlite3_errmsg(db));
         }
     }
     ~Statement() {
@@ -47,12 +44,10 @@ public:
     Statement(const Statement&) = delete;
     Statement& operator=(const Statement&) = delete;
 
-    void bindInt64(int index, std::int64_t value) {
-        sqlite3_bind_int64(stmt_, index, value);
-    }
+    void bindInt64(int index, std::int64_t value) { sqlite3_bind_int64(stmt_, index, value); }
     void bindText(int index, std::string_view value) {
-        sqlite3_bind_text(stmt_, index, value.data(),
-                          static_cast<int>(value.size()), SQLITE_TRANSIENT);
+        sqlite3_bind_text(
+            stmt_, index, value.data(), static_cast<int>(value.size()), SQLITE_TRANSIENT);
     }
     // true = 有一行
     bool step() { return sqlite3_step(stmt_) == SQLITE_ROW; }
@@ -61,20 +56,17 @@ public:
             throw std::runtime_error("sqlite step failed");
         }
     }
-    std::int64_t columnInt64(int index) {
-        return sqlite3_column_int64(stmt_, index);
-    }
+    std::int64_t columnInt64(int index) { return sqlite3_column_int64(stmt_, index); }
     std::string columnText(int index) {
         const auto* text = sqlite3_column_text(stmt_, index);
-        return text == nullptr ? std::string{}
-                               : std::string{reinterpret_cast<const char*>(text)};
+        return text == nullptr ? std::string{} : std::string{reinterpret_cast<const char*>(text)};
     }
 
 private:
     sqlite3_stmt* stmt_ = nullptr;
 };
 
-}  // namespace
+} // namespace
 
 JobQueue::JobQueue(std::string path) {
     if (sqlite3_open(path.c_str(), &db_) != SQLITE_OK) {
@@ -132,8 +124,7 @@ void JobQueue::enqueue(const Job& job) {
 }
 
 bool JobQueue::cancel(std::string_view key) {
-    Statement stmt(db_,
-                   "DELETE FROM jobs WHERE key=? AND state='pending'");
+    Statement stmt(db_, "DELETE FROM jobs WHERE key=? AND state='pending'");
     stmt.bindText(1, key);
     stmt.run();
     return sqlite3_changes(db_) > 0;
@@ -145,10 +136,9 @@ std::optional<JobRecord> JobQueue::claimNext() {
 
     JobRecord record;
     {
-        Statement select(
-            db_,
-            "SELECT id, key, kind, payload, attempts FROM jobs"
-            " WHERE state='pending' AND next_at<=? ORDER BY next_at LIMIT 1");
+        Statement select(db_,
+                         "SELECT id, key, kind, payload, attempts FROM jobs"
+                         " WHERE state='pending' AND next_at<=? ORDER BY next_at LIMIT 1");
         select.bindInt64(1, now);
         if (!select.step()) {
             exec("ROLLBACK");
@@ -207,8 +197,8 @@ std::size_t JobQueue::countDead() const {
     return stmt.step() ? static_cast<std::size_t>(stmt.columnInt64(0)) : 0;
 }
 
-boost::asio::awaitable<void> JobQueue::runWorker(
-    Handler handler, std::chrono::milliseconds pollInterval) {
+boost::asio::awaitable<void> JobQueue::runWorker(Handler handler,
+                                                 std::chrono::milliseconds pollInterval) {
     while (true) {
         auto job = claimNext();
         if (!job.has_value()) {
@@ -219,11 +209,11 @@ boost::asio::awaitable<void> JobQueue::runWorker(
             co_await handler(*job);
             markDone(job->id);
         } catch (const std::exception& e) {
-            spdlog::warn("job {} ({}) 第 {} 次失败: {}", job->key, job->kind,
-                         job->attempts, e.what());
+            spdlog::warn(
+                "job {} ({}) 第 {} 次失败: {}", job->key, job->kind, job->attempts, e.what());
             markRetry(job->id, e.what());
         }
     }
 }
 
-}  // namespace tgbot
+} // namespace tgbot

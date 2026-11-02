@@ -18,19 +18,16 @@ std::int64_t nowSeconds() {
         .count();
 }
 
-}  // namespace
+} // namespace
 
-Reconciler::Reconciler(RedPacketLedger& ledger, ChainMonitor& monitor,
-                       Options options)
+Reconciler::Reconciler(RedPacketLedger& ledger, ChainMonitor& monitor, Options options)
     : ledger_(ledger), monitor_(monitor), options_(options) {}
 
-boost::asio::awaitable<ReconciliationReport> Reconciler::run(
-    ChainProbe probe, AlertSink alert) {
+boost::asio::awaitable<ReconciliationReport> Reconciler::run(ChainProbe probe, AlertSink alert) {
     ReconciliationReport report;
     const auto now = nowSeconds();
 
-    const auto rows = ledger_.listRefunding(now, options_.minAge.count(),
-                                            options_.batch);
+    const auto rows = ledger_.listRefunding(now, options_.minAge.count(), options_.batch);
     report.scanned = rows.size();
 
     for (const auto& row : rows) {
@@ -66,11 +63,10 @@ boost::asio::awaitable<ReconciliationReport> Reconciler::run(
         if (probeError) {
             report.probeFailed = true;
             if (alert) {
-                co_await alert(
-                    "error",
-                    std::string{"对账探测失败（链/RPC 异常）: "} + probeMessage);
+                co_await alert("error",
+                               std::string{"对账探测失败（链/RPC 异常）: "} + probeMessage);
             }
-            break;  // 链都不通，继续扫没有意义
+            break; // 链都不通，继续扫没有意义
         }
 
         switch (status) {
@@ -92,14 +88,13 @@ boost::asio::awaitable<ReconciliationReport> Reconciler::run(
                     if (ledger_.markStuck(row.id)) {
                         ++report.stuck;
                         if (alert) {
-                            co_await alert(
-                                "warn", "红包 " + std::to_string(row.id) +
-                                            " 的 tx " + row.txRef +
-                                            " 在链上查不到，已标记 stuck");
+                            co_await alert("warn",
+                                           "红包 " + std::to_string(row.id) + " 的 tx " +
+                                               row.txRef + " 在链上查不到，已标记 stuck");
                         }
                     }
                 } else {
-                    ledger_.revertRefund(row.id);  // 多半还没广播出去，重试
+                    ledger_.revertRefund(row.id); // 多半还没广播出去，重试
                     ++report.requeued;
                 }
                 break;
@@ -118,4 +113,4 @@ boost::asio::awaitable<ReconciliationReport> Reconciler::run(
     co_return report;
 }
 
-}  // namespace tgbot
+} // namespace tgbot

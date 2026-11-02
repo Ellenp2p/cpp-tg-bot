@@ -4,7 +4,7 @@
 
 #include <string>
 
-struct sqlite3;  // 前向声明，头文件不暴露 sqlite3.h
+struct sqlite3; // 前向声明，头文件不暴露 sqlite3.h
 
 namespace tgbot {
 
@@ -33,4 +33,4 @@ private:
     sqlite3* db_ = nullptr;
 };
 
-}  // namespace tgbot
+} // namespace tgbot

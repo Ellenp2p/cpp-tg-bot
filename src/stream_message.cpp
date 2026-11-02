@@ -17,7 +17,7 @@ bool contains(std::string_view haystack, std::string_view needle) {
     return haystack.find(needle) != std::string_view::npos;
 }
 
-}  // namespace
+} // namespace
 
 StreamMessage::StreamMessage(BotClient& bot, StreamOptions options)
     : bot_(bot), opts_(std::move(options)) {}
@@ -44,21 +44,21 @@ boost::asio::awaitable<void> StreamMessage::append(std::string_view delta) {
     text_.append(delta.data(), delta.size());
 
     if (messageId_ == 0) {
-        co_return;  // 没起来或已失效
+        co_return; // 没起来或已失效
     }
     if (text_.size() > opts_.chunkLimit) {
-        frozen_ = true;  // 单条装不下了，收尾时分条发
+        frozen_ = true; // 单条装不下了，收尾时分条发
         co_return;
     }
     if (frozen_) {
         co_return;
     }
     if (text_.size() < sentChars_ + opts_.minChars) {
-        co_return;  // 增量太少，攒着
+        co_return; // 增量太少，攒着
     }
     const auto now = std::chrono::steady_clock::now();
     if (now - lastEdit_ < opts_.minInterval) {
-        co_return;  // 还没到下一次编辑的窗口
+        co_return; // 还没到下一次编辑的窗口
     }
     co_await flush(false);
 }
@@ -69,7 +69,7 @@ boost::asio::awaitable<void> StreamMessage::flush(bool isFinal) {
         body += opts_.cursor;
     }
     if (body == sent_) {
-        co_return;  // 内容没变：Telegram 会回 400 message is not modified
+        co_return; // 内容没变：Telegram 会回 400 message is not modified
     }
 
     SendOptions so;
@@ -83,7 +83,7 @@ boost::asio::awaitable<void> StreamMessage::flush(bool isFinal) {
     } catch (const TelegramApiError& e) {
         const std::string_view what{e.what()};
         if (contains(what, "message is not modified")) {
-            sent_ = body;  // 已经是最新内容，没什么可做的
+            sent_ = body; // 已经是最新内容，没什么可做的
             co_return;
         }
         if (contains(what, "message to edit not found") ||
@@ -108,7 +108,7 @@ boost::asio::awaitable<void> StreamMessage::finish() {
 
     auto parts = splitMessage(text_, opts_.chunkLimit, opts_.finalParseMode);
     if (parts.empty()) {
-        parts.push_back(opts_.cursor);  // 一个字都没收到：至少把光标留着
+        parts.push_back(opts_.cursor); // 一个字都没收到：至少把光标留着
     }
 
     SendOptions so;
@@ -132,4 +132,4 @@ boost::asio::awaitable<void> StreamMessage::finish() {
     messageId_ = 0;
 }
 
-}  // namespace tgbot
+} // namespace tgbot

@@ -18,23 +18,34 @@ inline constexpr std::array<const char*, 7> kMediaKinds{
     "sticker", "photo", "video", "voice", "audio", "animation", "video_note"};
 
 inline std::string_view kindLabel(std::string_view kind) {
-    if (kind == "sticker") return "贴纸";
-    if (kind == "photo") return "图片";
-    if (kind == "video") return "视频";
-    if (kind == "voice") return "语音";
-    if (kind == "audio") return "音频";
-    if (kind == "animation") return "动图";
-    if (kind == "video_note") return "圆视频";
+    if (kind == "sticker")
+        return "贴纸";
+    if (kind == "photo")
+        return "图片";
+    if (kind == "video")
+        return "视频";
+    if (kind == "voice")
+        return "语音";
+    if (kind == "audio")
+        return "音频";
+    if (kind == "animation")
+        return "动图";
+    if (kind == "video_note")
+        return "圆视频";
     return "未知";
 }
 
 // 默认时限（秒）：0 = 默认不删除。
 // 只给用户点名要的四类默认值，其余默认关，避免一开机器人就误删。
 inline int kindDefaultDelay(std::string_view kind) {
-    if (kind == "sticker") return 60;
-    if (kind == "photo") return 300;
-    if (kind == "video") return 300;
-    if (kind == "voice") return 300;
+    if (kind == "sticker")
+        return 60;
+    if (kind == "photo")
+        return 300;
+    if (kind == "video")
+        return 300;
+    if (kind == "voice")
+        return 300;
     return 0;
 }
 
@@ -85,61 +96,51 @@ inline std::optional<int> parseDelay(std::string_view raw) {
         for (const unsigned char c : s) {
             out.push_back(static_cast<char>(std::tolower(c)));
         }
-        while (!out.empty() &&
-               std::isspace(static_cast<unsigned char>(out.front()))) {
+        while (!out.empty() && std::isspace(static_cast<unsigned char>(out.front()))) {
             out.erase(out.begin());
         }
-        while (!out.empty() &&
-               std::isspace(static_cast<unsigned char>(out.back()))) {
+        while (!out.empty() && std::isspace(static_cast<unsigned char>(out.back()))) {
             out.pop_back();
         }
         return out;
     };
 
     const auto lower = lowerTrim(raw);
-    if (lower == "off" || lower == "close" || lower == "关闭" ||
-        lower == "关" || lower == "0") {
+    if (lower == "off" || lower == "close" || lower == "关闭" || lower == "关" || lower == "0") {
         return 0;
     }
 
     std::size_t i = 0;
-    while (i < lower.size() &&
-           std::isspace(static_cast<unsigned char>(lower[i]))) {
+    while (i < lower.size() && std::isspace(static_cast<unsigned char>(lower[i]))) {
         ++i;
     }
     const std::size_t digitStart = i;
     std::int64_t value = 0;
-    while (i < lower.size() &&
-           std::isdigit(static_cast<unsigned char>(lower[i]))) {
+    while (i < lower.size() && std::isdigit(static_cast<unsigned char>(lower[i]))) {
         value = value * 10 + (lower[i] - '0');
         if (value > 10'000'000) {
-            return std::nullopt;  // 防溢出，也拦住手滑打出的一长串数字
+            return std::nullopt; // 防溢出，也拦住手滑打出的一长串数字
         }
         ++i;
     }
     if (i == digitStart) {
         return std::nullopt;
     }
-    while (i < lower.size() &&
-           std::isspace(static_cast<unsigned char>(lower[i]))) {
+    while (i < lower.size() && std::isspace(static_cast<unsigned char>(lower[i]))) {
         ++i;
     }
     const std::string unit = lower.substr(i);
 
     std::int64_t multiplier = 1;
-    if (unit.empty() || unit == "s" || unit == "sec" || unit == "secs" ||
-        unit == "second" || unit == "seconds" || unit == "秒" ||
-        unit == "秒钟") {
+    if (unit.empty() || unit == "s" || unit == "sec" || unit == "secs" || unit == "second" ||
+        unit == "seconds" || unit == "秒" || unit == "秒钟") {
         multiplier = 1;
-    } else if (unit == "m" || unit == "min" || unit == "mins" ||
-               unit == "minute" || unit == "minutes" || unit == "分" ||
-               unit == "分钟") {
+    } else if (unit == "m" || unit == "min" || unit == "mins" || unit == "minute" ||
+               unit == "minutes" || unit == "分" || unit == "分钟") {
         multiplier = 60;
-    } else if (unit == "h" || unit == "hr" || unit == "hour" ||
-               unit == "hours" || unit == "小时") {
+    } else if (unit == "h" || unit == "hr" || unit == "hour" || unit == "hours" || unit == "小时") {
         multiplier = 3600;
-    } else if (unit == "d" || unit == "day" || unit == "days" ||
-               unit == "天") {
+    } else if (unit == "d" || unit == "day" || unit == "days" || unit == "天") {
         multiplier = 86400;
     } else {
         return std::nullopt;
@@ -168,4 +169,4 @@ inline std::string formatDelay(int seconds) {
     return std::to_string(seconds) + " 秒";
 }
 
-}  // namespace warden
+} // namespace warden

@@ -29,8 +29,8 @@ class DeleteScheduler : public std::enable_shared_from_this<DeleteScheduler> {
 public:
     struct Options {
         int workers = 4;
-        int globalIntervalMs = 34;    // 全局 ~30 次/秒
-        int perChatIntervalMs = 250;  // 单群 ~4 次/秒
+        int globalIntervalMs = 34;   // 全局 ~30 次/秒
+        int perChatIntervalMs = 250; // 单群 ~4 次/秒
         int maxAttempts = 5;
         // 启动时先对"有待删任务的群"各调一次 getChat，补登记当前置顶消息，
         // 防止机器人在停机期间被置顶的媒体重启后被误删。
@@ -47,8 +47,10 @@ public:
 
     // 到期时间由调用方按消息的 date（Telegram 服务器时间）计算，
     // 这样停机补收的旧消息如果已经超时，会立刻删除而不是再等一轮。
-    void schedule(std::int64_t chatId, std::int64_t messageId,
-                  std::string kind, std::int64_t dueAt,
+    void schedule(std::int64_t chatId,
+                  std::int64_t messageId,
+                  std::string kind,
+                  std::int64_t dueAt,
                   std::int64_t targetUserId = 0);
     void cancelChat(std::int64_t chatId);
     void cancelKind(std::int64_t chatId, std::string_view kind);
@@ -72,4 +74,4 @@ private:
     std::map<std::int64_t, std::int64_t> lastAlertAt_;
 };
 
-}  // namespace warden
+} // namespace warden

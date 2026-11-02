@@ -29,4 +29,4 @@ net::awaitable<void> RateLimiter::beforeSend(std::int64_t chatId) {
     }
 }
 
-}  // namespace tgbot
+} // namespace tgbot

@@ -56,8 +56,7 @@ bool saveOffset(const std::string& path, std::int64_t offset) {
         spdlog::warn("open offset tmp '{}' failed", tmp);
         return false;
     }
-    const bool wrote = std::fprintf(f, "%lld\n",
-                                    static_cast<long long>(offset)) > 0;
+    const bool wrote = std::fprintf(f, "%lld\n", static_cast<long long>(offset)) > 0;
     std::fflush(f);
 #if defined(_WIN32)
     ::_commit(::_fileno(f));
@@ -73,8 +72,7 @@ bool saveOffset(const std::string& path, std::int64_t offset) {
     std::error_code ec;
     fs::rename(tmp, path, ec);
     if (ec) {
-        spdlog::warn("rename offset '{}' -> '{}' failed: {}", tmp, path,
-                     ec.message());
+        spdlog::warn("rename offset '{}' -> '{}' failed: {}", tmp, path, ec.message());
         return false;
     }
     return true;
@@ -91,8 +89,7 @@ net::awaitable<std::int64_t> flushPendingUpdates(BotClient& bot,
         bool conflict = false;
         std::string err;
         try {
-            last =
-                co_await bot.getUpdates(-1, /*timeout=*/0, opts.allowedUpdates);
+            last = co_await bot.getUpdates(-1, /*timeout=*/0, opts.allowedUpdates);
             ok = true;
         } catch (const TelegramApiError& e) {
             err = e.what();
@@ -100,8 +97,7 @@ net::awaitable<std::int64_t> flushPendingUpdates(BotClient& bot,
             // 永久错误（错 token 之类）默认直接上抛退出；配置成"一直重试"时
             // 就当普通失败处理，回落到持久化 offset 后由主循环继续退避
             if (isPermanentError(e.errorCode) &&
-                opts.permanentErrorPolicy ==
-                    LongPollOptions::PermanentErrorPolicy::kExit) {
+                opts.permanentErrorPolicy == LongPollOptions::PermanentErrorPolicy::kExit) {
                 throw;
             }
         } catch (const std::exception& e) {
@@ -113,8 +109,7 @@ net::awaitable<std::int64_t> flushPendingUpdates(BotClient& bot,
                 spdlog::info("no pending updates, start from offset 0");
                 co_return 0;
             }
-            const auto next =
-                last.back().value("update_id", std::int64_t{0}) + 1;
+            const auto next = last.back().value("update_id", std::int64_t{0}) + 1;
             co_await bot.getUpdates(next, /*timeout=*/0, opts.allowedUpdates);
             saveOffset(opts.offsetFile, next);
             spdlog::info("dropped pending updates, start from offset {}", next);
@@ -133,14 +128,14 @@ net::awaitable<std::int64_t> flushPendingUpdates(BotClient& bot,
             continue;
         }
 
-        spdlog::warn("flush pending updates failed: {}; 回落到持久化 offset",
-                     err);
+        spdlog::warn("flush pending updates failed: {}; 回落到持久化 offset", err);
         break;
     }
     co_return loadOffset(opts.offsetFile);
 }
 
-net::awaitable<void> longPollLoopImpl(BotClient& bot, Dispatcher& dispatcher,
+net::awaitable<void> longPollLoopImpl(BotClient& bot,
+                                      Dispatcher& dispatcher,
                                       LongPollOptions opts,
                                       const std::atomic<bool>* shuttingDown) {
     const auto executor = co_await net::this_coro::executor;
@@ -162,8 +157,7 @@ net::awaitable<void> longPollLoopImpl(BotClient& bot, Dispatcher& dispatcher,
     // 有界队列 + per-chat lane + 固定 worker：同一聊天的 update 串行，
     // 不同聊天由多个 worker 并发；全部在同一个 io_context 线程，无锁。
     // 与 webhook 模式共用 detail::UpdateWorkers（src/chat_dispatch_util.hpp）。
-    detail::UpdateWorkers updateWorkers(executor, opts.maxPendingUpdates,
-                                        opts.updateWorkers);
+    detail::UpdateWorkers updateWorkers(executor, opts.maxPendingUpdates, opts.updateWorkers);
 
     while (true) {
         if (shuttingDown != nullptr && shuttingDown->load()) {
@@ -174,13 +168,12 @@ net::awaitable<void> longPollLoopImpl(BotClient& bot, Dispatcher& dispatcher,
         std::string error;
         long errorCode = 0;
         try {
-            updates = co_await bot.getUpdates(offset, opts.pollTimeoutSeconds,
-                                              opts.allowedUpdates);
+            updates = co_await bot.getUpdates(offset, opts.pollTimeoutSeconds, opts.allowedUpdates);
         } catch (const TelegramApiError& e) {
             error = e.what();
             errorCode = e.errorCode;
         } catch (const std::exception& e) {
-            error = e.what();  // co_await 不允许出现在 catch 块内，先记录后处理
+            error = e.what(); // co_await 不允许出现在 catch 块内，先记录后处理
         }
 
         // 残留 webhook：自动清理一次，清完立刻重试（不进退避）
@@ -202,25 +195,25 @@ net::awaitable<void> longPollLoopImpl(BotClient& bot, Dispatcher& dispatcher,
         // 里的 403（被踢出群、没有删消息权限）只会被 Dispatcher 记日志。
         if (!error.empty()) {
             const bool permanent = (errorCode != 0) && isPermanentError(errorCode);
-            if (permanent && opts.permanentErrorPolicy ==
-                                 LongPollOptions::PermanentErrorPolicy::kExit) {
+            if (permanent &&
+                opts.permanentErrorPolicy == LongPollOptions::PermanentErrorPolicy::kExit) {
                 spdlog::error(
                     "getUpdates 永久失败（{}）: {}；停止长轮询并退出（想一直重试"
                     "可设 LongPollOptions::permanentErrorPolicy = kRetryForever）",
-                    errorCode, error);
+                    errorCode,
+                    error);
                 throw TelegramApiError{errorCode, error};
             }
             if (permanent) {
-                spdlog::error("getUpdates 永久错误（{}）: {}；按配置继续退避重试",
-                              errorCode, error);
+                spdlog::error(
+                    "getUpdates 永久错误（{}）: {}；按配置继续退避重试", errorCode, error);
             } else if (errorCode == 409) {
                 spdlog::error(
                     "HTTP 409：webhook 已清理后仍然冲突，说明另一个进程正在用"
                     "同一个 token 跑长轮询，请停掉它或换 token；{}s 后重试",
                     backoff.count());
             } else {
-                spdlog::error("getUpdates failed: {}; retry in {}s", error,
-                              backoff.count());
+                spdlog::error("getUpdates failed: {}; retry in {}s", error, backoff.count());
             }
             net::steady_timer timer(executor, backoff);
             co_await timer.async_wait(net::use_awaitable);
@@ -232,8 +225,7 @@ net::awaitable<void> longPollLoopImpl(BotClient& bot, Dispatcher& dispatcher,
         // 停机中：不再派发、也不推进 offset。这些 update 没被确认，
         // 下次启动（dropPendingUpdates=false）会重新收到。
         if (shuttingDown != nullptr && shuttingDown->load()) {
-            spdlog::info("shutting down, leaving {} update(s) unacknowledged",
-                         updates.size());
+            spdlog::info("shutting down, leaving {} update(s) unacknowledged", updates.size());
             co_return;
         }
 
@@ -244,32 +236,34 @@ net::awaitable<void> longPollLoopImpl(BotClient& bot, Dispatcher& dispatcher,
                 queueFull = true;
                 break;
             }
-            offset = std::max(offset,
-                              update.value("update_id", std::int64_t{0}) + 1);
+            offset = std::max(offset, update.value("update_id", std::int64_t{0}) + 1);
         }
         if (!updates.empty()) {
             saveOffset(opts.offsetFile, offset);
         }
         if (queueFull) {
             spdlog::debug("update queue full (pending={}/{}), pause intake",
-                          updateWorkers.pending(), updateWorkers.maxPending());
+                          updateWorkers.pending(),
+                          updateWorkers.maxPending());
             net::steady_timer timer(executor, std::chrono::milliseconds{50});
             co_await timer.async_wait(net::use_awaitable);
         }
     }
 }
 
-}  // namespace
+} // namespace
 
-net::awaitable<void> longPollLoop(BotClient& bot, Dispatcher& dispatcher,
+net::awaitable<void> longPollLoop(BotClient& bot,
+                                  Dispatcher& dispatcher,
                                   const std::atomic<bool>* shuttingDown) {
     co_await longPollLoopImpl(bot, dispatcher, LongPollOptions{}, shuttingDown);
 }
 
-net::awaitable<void> longPollLoop(BotClient& bot, Dispatcher& dispatcher,
+net::awaitable<void> longPollLoop(BotClient& bot,
+                                  Dispatcher& dispatcher,
                                   const LongPollOptions& options,
                                   const std::atomic<bool>* shuttingDown) {
     co_await longPollLoopImpl(bot, dispatcher, options, shuttingDown);
 }
 
-}  // namespace tgbot
+} // namespace tgbot

@@ -1,7 +1,7 @@
 #include <tgbot/red_packet_ledger.hpp>
 
-#include <sqlite3.h>
 #include <spdlog/spdlog.h>
+#include <sqlite3.h>
 
 #include <chrono>
 #include <cstdint>
@@ -22,8 +22,7 @@ class Statement {
 public:
     explicit Statement(sqlite3* db, const char* sql) {
         if (sqlite3_prepare_v2(db, sql, -1, &stmt_, nullptr) != SQLITE_OK) {
-            throw std::runtime_error(std::string{"sqlite prepare failed: "} +
-                                     sqlite3_errmsg(db));
+            throw std::runtime_error(std::string{"sqlite prepare failed: "} + sqlite3_errmsg(db));
         }
     }
     ~Statement() {
@@ -34,12 +33,10 @@ public:
     Statement(const Statement&) = delete;
     Statement& operator=(const Statement&) = delete;
 
-    void bindInt64(int index, std::int64_t value) {
-        sqlite3_bind_int64(stmt_, index, value);
-    }
+    void bindInt64(int index, std::int64_t value) { sqlite3_bind_int64(stmt_, index, value); }
     void bindText(int index, std::string_view value) {
-        sqlite3_bind_text(stmt_, index, value.data(),
-                          static_cast<int>(value.size()), SQLITE_TRANSIENT);
+        sqlite3_bind_text(
+            stmt_, index, value.data(), static_cast<int>(value.size()), SQLITE_TRANSIENT);
     }
     bool step() { return sqlite3_step(stmt_) == SQLITE_ROW; }
     void run() {
@@ -47,14 +44,10 @@ public:
             throw std::runtime_error("sqlite step failed");
         }
     }
-    std::int64_t columnInt64(int index) {
-        return sqlite3_column_int64(stmt_, index);
-    }
+    std::int64_t columnInt64(int index) { return sqlite3_column_int64(stmt_, index); }
     std::string columnText(int index) {
         const auto* text = sqlite3_column_text(stmt_, index);
-        return text == nullptr
-                   ? std::string{}
-                   : std::string{reinterpret_cast<const char*>(text)};
+        return text == nullptr ? std::string{} : std::string{reinterpret_cast<const char*>(text)};
     }
 
 private:
@@ -86,7 +79,7 @@ RedPacketRow readRow(Statement& stmt) {
     return row;
 }
 
-}  // namespace
+} // namespace
 
 RedPacketLedger::RedPacketLedger(std::string path) {
     if (sqlite3_open(path.c_str(), &db_) != SQLITE_OK) {
@@ -129,13 +122,15 @@ RedPacketLedger::~RedPacketLedger() {
 void RedPacketLedger::migrate() {
     // 老库升级：加上对账需要的两列
     if (!hasColumn("red_packets", "refund_started_at")) {
-        exec("ALTER TABLE red_packets ADD COLUMN refund_started_at "
-             "INTEGER NOT NULL DEFAULT 0");
+        exec(
+            "ALTER TABLE red_packets ADD COLUMN refund_started_at "
+            "INTEGER NOT NULL DEFAULT 0");
         spdlog::info("ledger: 已迁移，新增 refund_started_at");
     }
     if (!hasColumn("red_packets", "refund_attempts")) {
-        exec("ALTER TABLE red_packets ADD COLUMN refund_attempts "
-             "INTEGER NOT NULL DEFAULT 0");
+        exec(
+            "ALTER TABLE red_packets ADD COLUMN refund_attempts "
+            "INTEGER NOT NULL DEFAULT 0");
         spdlog::info("ledger: 已迁移，新增 refund_attempts");
     }
 }
@@ -163,15 +158,15 @@ void RedPacketLedger::exec(const char* sql) const {
 
 std::int64_t RedPacketLedger::create(std::int64_t chatId,
                                      std::int64_t creatorId,
-                                     std::int64_t totalCents, int count,
+                                     std::int64_t totalCents,
+                                     int count,
                                      std::chrono::seconds ttl) {
     const auto now = nowSeconds();
     const auto expires = now + ttl.count();
-    Statement stmt(
-        db_,
-        "INSERT INTO red_packets(chat_id, creator_id, total_cents, total_count,"
-        " remaining_cents, remaining_count, state, created_at, expires_at)"
-        " VALUES(?, ?, ?, ?, ?, ?, 'open', ?, ?)");
+    Statement stmt(db_,
+                   "INSERT INTO red_packets(chat_id, creator_id, total_cents, total_count,"
+                   " remaining_cents, remaining_count, state, created_at, expires_at)"
+                   " VALUES(?, ?, ?, ?, ?, ?, 'open', ?, ?)");
     stmt.bindInt64(1, chatId);
     stmt.bindInt64(2, creatorId);
     stmt.bindInt64(3, totalCents);
@@ -185,8 +180,7 @@ std::int64_t RedPacketLedger::create(std::int64_t chatId,
 }
 
 std::optional<RedPacketRow> RedPacketLedger::get(std::int64_t id) const {
-    const std::string sql = std::string{"SELECT "} + kColumns +
-                            " FROM red_packets WHERE id=?";
+    const std::string sql = std::string{"SELECT "} + kColumns + " FROM red_packets WHERE id=?";
     Statement stmt(db_, sql.c_str());
     stmt.bindInt64(1, id);
     if (!stmt.step()) {
@@ -214,31 +208,30 @@ std::vector<GrabRow> RedPacketLedger::grabs(std::int64_t id) const {
 }
 
 bool RedPacketLedger::hasGrabbed(std::int64_t id, std::int64_t userId) const {
-    Statement stmt(
-        db_,
-        "SELECT 1 FROM red_packet_grabs WHERE packet_id=? AND user_id=?");
+    Statement stmt(db_, "SELECT 1 FROM red_packet_grabs WHERE packet_id=? AND user_id=?");
     stmt.bindInt64(1, id);
     stmt.bindInt64(2, userId);
     return stmt.step();
 }
 
-bool RedPacketLedger::grab(std::int64_t id, std::int64_t userId,
-                           std::string_view userName, std::int64_t cents) {
+bool RedPacketLedger::grab(std::int64_t id,
+                           std::int64_t userId,
+                           std::string_view userName,
+                           std::int64_t cents) {
     if (cents <= 0) {
         return false;
     }
     exec("BEGIN IMMEDIATE");
 
     {
-        Statement update(
-            db_,
-            "UPDATE red_packets SET"
-            " remaining_cents = remaining_cents - ?,"
-            " remaining_count = remaining_count - 1,"
-            " state = CASE WHEN remaining_count - 1 <= 0 THEN 'exhausted'"
-            "              ELSE state END"
-            " WHERE id=? AND state='open' AND remaining_count>0"
-            "   AND remaining_cents>=?");
+        Statement update(db_,
+                         "UPDATE red_packets SET"
+                         " remaining_cents = remaining_cents - ?,"
+                         " remaining_count = remaining_count - 1,"
+                         " state = CASE WHEN remaining_count - 1 <= 0 THEN 'exhausted'"
+                         "              ELSE state END"
+                         " WHERE id=? AND state='open' AND remaining_count>0"
+                         "   AND remaining_cents>=?");
         update.bindInt64(1, cents);
         update.bindInt64(2, id);
         update.bindInt64(3, cents);
@@ -250,11 +243,10 @@ bool RedPacketLedger::grab(std::int64_t id, std::int64_t userId,
     }
 
     {
-        Statement insert(
-            db_,
-            "INSERT OR IGNORE INTO red_packet_grabs"
-            "(packet_id, user_id, cents, user_name, created_at)"
-            " VALUES(?, ?, ?, ?, ?)");
+        Statement insert(db_,
+                         "INSERT OR IGNORE INTO red_packet_grabs"
+                         "(packet_id, user_id, cents, user_name, created_at)"
+                         " VALUES(?, ?, ?, ?, ?)");
         insert.bindInt64(1, id);
         insert.bindInt64(2, userId);
         insert.bindInt64(3, cents);
@@ -262,7 +254,7 @@ bool RedPacketLedger::grab(std::int64_t id, std::int64_t userId,
         insert.bindInt64(5, nowSeconds());
         insert.run();
         if (sqlite3_changes(db_) != 1) {
-            exec("ROLLBACK");  // 同一人重复领取
+            exec("ROLLBACK"); // 同一人重复领取
             return false;
         }
     }
@@ -287,12 +279,11 @@ bool RedPacketLedger::markExpired(std::int64_t id) {
     return sqlite3_changes(db_) == 1;
 }
 
-std::vector<RedPacketRow> RedPacketLedger::listRefundable(
-    std::int64_t nowSecondsValue, std::size_t limit) const {
-    const std::string sql =
-        std::string{"SELECT "} + kColumns +
-        " FROM red_packets WHERE state='expired'"
-        " OR (state='open' AND expires_at<=?) ORDER BY id LIMIT ?";
+std::vector<RedPacketRow> RedPacketLedger::listRefundable(std::int64_t nowSecondsValue,
+                                                          std::size_t limit) const {
+    const std::string sql = std::string{"SELECT "} + kColumns +
+                            " FROM red_packets WHERE state='expired'"
+                            " OR (state='open' AND expires_at<=?) ORDER BY id LIMIT ?";
     std::vector<RedPacketRow> rows;
     Statement stmt(db_, sql.c_str());
     stmt.bindInt64(1, nowSecondsValue);
@@ -303,13 +294,12 @@ std::vector<RedPacketRow> RedPacketLedger::listRefundable(
     return rows;
 }
 
-std::vector<RedPacketRow> RedPacketLedger::listRefunding(
-    std::int64_t nowSecondsValue, std::int64_t minAgeSeconds,
-    std::size_t limit) const {
-    const std::string sql =
-        std::string{"SELECT "} + kColumns +
-        " FROM red_packets WHERE state IN ('refunding','stuck')"
-        "   AND refund_started_at<=? ORDER BY refund_started_at LIMIT ?";
+std::vector<RedPacketRow> RedPacketLedger::listRefunding(std::int64_t nowSecondsValue,
+                                                         std::int64_t minAgeSeconds,
+                                                         std::size_t limit) const {
+    const std::string sql = std::string{"SELECT "} + kColumns +
+                            " FROM red_packets WHERE state IN ('refunding','stuck')"
+                            "   AND refund_started_at<=? ORDER BY refund_started_at LIMIT ?";
     std::vector<RedPacketRow> rows;
     Statement stmt(db_, sql.c_str());
     stmt.bindInt64(1, nowSecondsValue - minAgeSeconds);
@@ -378,9 +368,8 @@ bool RedPacketLedger::recoverFromStuck(std::int64_t id) {
 }
 
 std::size_t RedPacketLedger::countStuck() const {
-    Statement stmt(db_,
-                   "SELECT COUNT(*) FROM red_packets WHERE state='stuck'");
+    Statement stmt(db_, "SELECT COUNT(*) FROM red_packets WHERE state='stuck'");
     return stmt.step() ? static_cast<std::size_t>(stmt.columnInt64(0)) : 0;
 }
 
-}  // namespace tgbot
+} // namespace tgbot

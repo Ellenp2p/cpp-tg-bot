@@ -6,10 +6,9 @@
 
 namespace tgbot {
 
-std::int64_t createRedPacket(RedPacketLedger& ledger, JobQueue& jobs,
-                             const RedPacketSpec& spec) {
-    const auto id = ledger.create(spec.chatId, spec.creatorId, spec.totalCents,
-                                  spec.count, spec.ttl);
+std::int64_t createRedPacket(RedPacketLedger& ledger, JobQueue& jobs, const RedPacketSpec& spec) {
+    const auto id =
+        ledger.create(spec.chatId, spec.creatorId, spec.totalCents, spec.count, spec.ttl);
 
     Job job;
     job.key = "red_packet_refund:" + std::to_string(id);
@@ -20,4 +19,4 @@ std::int64_t createRedPacket(RedPacketLedger& ledger, JobQueue& jobs,
     return id;
 }
 
-}  // namespace tgbot
+} // namespace tgbot

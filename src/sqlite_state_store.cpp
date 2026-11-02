@@ -13,19 +13,18 @@ namespace {
 sqlite3_stmt* prepare(sqlite3* db, const char* sql) {
     sqlite3_stmt* stmt = nullptr;
     if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
-        throw std::runtime_error(std::string{"sqlite prepare failed: "} +
-                                 sqlite3_errmsg(db) + " [" + sql + "]");
+        throw std::runtime_error(std::string{"sqlite prepare failed: "} + sqlite3_errmsg(db) +
+                                 " [" + sql + "]");
     }
     return stmt;
 }
 
 void bindText(sqlite3_stmt* stmt, int index, std::string_view value) {
     // SQLITE_TRANSIENT：让 SQLite 拷贝数据，调用方无需保活到 step 之后
-    sqlite3_bind_text(stmt, index, value.data(),
-                      static_cast<int>(value.size()), SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, index, value.data(), static_cast<int>(value.size()), SQLITE_TRANSIENT);
 }
 
-}  // namespace
+} // namespace
 
 SqliteStateStore::SqliteStateStore(const std::string& dbPath) {
     if (sqlite3_open(dbPath.c_str(), &db_) != SQLITE_OK) {
@@ -43,7 +42,9 @@ SqliteStateStore::SqliteStateStore(const std::string& dbPath) {
                  "  k TEXT PRIMARY KEY,"
                  "  v TEXT NOT NULL"
                  ");",
-                 nullptr, nullptr, nullptr);
+                 nullptr,
+                 nullptr,
+                 nullptr);
 }
 
 SqliteStateStore::~SqliteStateStore() {
@@ -57,24 +58,20 @@ std::optional<std::string> SqliteStateStore::get(std::string_view key) {
     bindText(stmt, 1, key);
     std::optional<std::string> result;
     if (sqlite3_step(stmt) == SQLITE_ROW) {
-        const auto* text =
-            reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
-        result = text ? std::string{text}
-                      : std::string{};  // 空串值与 NULL 区分
+        const auto* text = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+        result = text ? std::string{text} : std::string{}; // 空串值与 NULL 区分
     }
     sqlite3_finalize(stmt);
     return result;
 }
 
 void SqliteStateStore::set(std::string_view key, std::string_view value) {
-    sqlite3_stmt* stmt =
-        prepare(db_, "INSERT OR REPLACE INTO tgbot_kv (k, v) VALUES (?, ?)");
+    sqlite3_stmt* stmt = prepare(db_, "INSERT OR REPLACE INTO tgbot_kv (k, v) VALUES (?, ?)");
     bindText(stmt, 1, key);
     bindText(stmt, 2, value);
     if (sqlite3_step(stmt) != SQLITE_DONE) {
         sqlite3_finalize(stmt);
-        throw std::runtime_error(std::string{"sqlite set failed: "} +
-                                 sqlite3_errmsg(db_));
+        throw std::runtime_error(std::string{"sqlite set failed: "} + sqlite3_errmsg(db_));
     }
     sqlite3_finalize(stmt);
 }
@@ -82,8 +79,8 @@ void SqliteStateStore::set(std::string_view key, std::string_view value) {
 void SqliteStateStore::erase(std::string_view key) {
     sqlite3_stmt* stmt = prepare(db_, "DELETE FROM tgbot_kv WHERE k = ?");
     bindText(stmt, 1, key);
-    sqlite3_step(stmt);  // 删不存在的关键字不是错误
+    sqlite3_step(stmt); // 删不存在的关键字不是错误
     sqlite3_finalize(stmt);
 }
 
-}  // namespace tgbot
+} // namespace tgbot

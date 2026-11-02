@@ -29,7 +29,7 @@ public:
         std::string drawLabel = "🎲 开奖";
         int winnerCount = 1;
         std::chrono::seconds duration{300};
-        std::int64_t creatorId = 0;  // 0 表示谁都能开奖
+        std::int64_t creatorId = 0; // 0 表示谁都能开奖
         // 中奖者是否额外收到一条"只有自己可见"的消息（专属码）。
         // 默认关闭：中奖结果全部在群里公开，不需要去私聊找机器人。
         bool rewardPrivate = false;
@@ -58,11 +58,11 @@ private:
     std::chrono::seconds remaining() const;
 
     Config config_;
-    std::map<std::int64_t, std::string> participants_;  // userId -> 显示名
+    std::map<std::int64_t, std::string> participants_; // userId -> 显示名
     std::vector<std::int64_t> winners_;
     bool closed_ = false;
     std::chrono::system_clock::time_point deadline_;
     mutable std::mt19937 rng_{std::random_device{}()};
 };
 
-}  // namespace tgbot
+} // namespace tgbot

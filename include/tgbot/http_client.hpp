@@ -21,8 +21,8 @@ enum class HttpMethod { kGet, kPost };
 // 否则正常的等待会被当成故障。
 struct HttpRequest {
     HttpMethod method = HttpMethod::kGet;
-    std::string target;   // 路径 + 可选 query，例如 /bot<token>/getMe
-    std::string body;     // 仅 POST 使用（表单编码）
+    std::string target; // 路径 + 可选 query，例如 /bot<token>/getMe
+    std::string body;   // 仅 POST 使用（表单编码）
     std::string contentType = "application/x-www-form-urlencoded";
     std::chrono::seconds readTimeout{30};
 };
@@ -37,11 +37,10 @@ boost::asio::awaitable<HttpResponse> httpsRequest(const std::string& host,
                                                   const HttpRequest& request);
 
 // 便捷版 GET（保留给只想发 GET 的调用方）
-boost::asio::awaitable<HttpResponse> httpsGet(const std::string& host,
-                                              const std::string& target);
+boost::asio::awaitable<HttpResponse> httpsGet(const std::string& host, const std::string& target);
 
 // 清空空闲连接池。连接对象持有 io_context 的 executor，必须在
 // io_context 销毁之前清空（BotClient 析构时会调用；自建客户端也要记得调）。
 void clearIdlePool();
 
-}  // namespace tgbot
+} // namespace tgbot

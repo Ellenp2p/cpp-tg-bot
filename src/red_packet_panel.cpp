@@ -21,14 +21,14 @@ std::string formatMoney(std::int64_t cents) {
     return out;
 }
 
-}  // namespace
+} // namespace
 
-RedPacketPanel::RedPacketPanel(std::shared_ptr<RedPacketLedger> ledger,
-                               std::int64_t packetId)
+RedPacketPanel::RedPacketPanel(std::shared_ptr<RedPacketLedger> ledger, std::int64_t packetId)
     : RedPacketPanel(std::move(ledger), packetId, Options{}) {}
 
 RedPacketPanel::RedPacketPanel(std::shared_ptr<RedPacketLedger> ledger,
-                               std::int64_t packetId, Options options)
+                               std::int64_t packetId,
+                               Options options)
     : ledger_(std::move(ledger)),
       packetId_(packetId),
       options_(std::move(options)),
@@ -36,11 +36,11 @@ RedPacketPanel::RedPacketPanel(std::shared_ptr<RedPacketLedger> ledger,
 
 std::int64_t RedPacketPanel::split(std::int64_t remaining, int count) {
     if (count <= 1) {
-        return remaining;  // 最后一份全给
+        return remaining; // 最后一份全给
     }
     const auto maxPart = std::max<std::int64_t>(1, remaining * 2 / count);
     std::uniform_int_distribution<std::int64_t> dist(1, maxPart);
-    const auto cap = remaining - (count - 1);  // 给后面每人至少留 1 分
+    const auto cap = remaining - (count - 1); // 给后面每人至少留 1 分
     return std::max<std::int64_t>(1, std::min(dist(rng_), cap));
 }
 
@@ -63,15 +63,14 @@ PanelView RedPacketPanel::render() const {
         text += "状态：<b>已抢完</b>（" + std::to_string(grabs.size()) + "/" +
                 std::to_string(row->totalCount) + "）\n";
     } else if (row->state == "expired") {
-        text += "状态：<b>已过期</b>，剩余 ¥" +
-                formatMoney(row->remainingCents) + " 未领取\n";
+        text += "状态：<b>已过期</b>，剩余 ¥" + formatMoney(row->remainingCents) + " 未领取\n";
     } else if (row->state == "refunding" || row->state == "refunded") {
-        text += "状态：<b>已过期</b>，剩余 ¥" +
-                formatMoney(row->remainingCents) + " 已退回发起人\n";
+        text +=
+            "状态：<b>已过期</b>，剩余 ¥" + formatMoney(row->remainingCents) + " 已退回发起人\n";
     } else {
         text += "剩余：<b>¥" + formatMoney(row->remainingCents) + "</b>（" +
-                std::to_string(grabs.size()) + "/" +
-                std::to_string(row->totalCount) + " 已领取）\n";
+                std::to_string(grabs.size()) + "/" + std::to_string(row->totalCount) +
+                " 已领取）\n";
     }
 
     if (options_.showList && !grabs.empty()) {
@@ -79,23 +78,21 @@ PanelView RedPacketPanel::render() const {
         constexpr std::size_t kMaxShown = 10;
         for (std::size_t i = 0; i < grabs.size() && i < kMaxShown; ++i) {
             const auto& grab = grabs[i];
-            text += escapeHtml(grab.userName.empty()
-                                   ? "用户" + std::to_string(grab.userId)
-                                   : grab.userName) +
+            text += escapeHtml(grab.userName.empty() ? "用户" + std::to_string(grab.userId)
+                                                     : grab.userName) +
                     "  ¥" + formatMoney(grab.cents) + "\n";
         }
         if (grabs.size() > kMaxShown) {
-            text += "…… 另有 " + std::to_string(grabs.size() - kMaxShown) +
-                    " 人抢到\n";
+            text += "…… 另有 " + std::to_string(grabs.size() - kMaxShown) + " 人抢到\n";
         }
     }
 
     view.text = std::move(text);
     if (row->state == "open" && row->remainingCents > 0) {
         nlohmann::json rows = nlohmann::json::array();
-        rows.push_back(nlohmann::json::array(
-            {{{"text", options_.grabLabel},
-              {"callback_data", PanelManager::callbackData("grab")}}}));
+        rows.push_back(
+            nlohmann::json::array({{{"text", options_.grabLabel},
+                                    {"callback_data", PanelManager::callbackData("grab")}}}));
         view.keyboard = {{"inline_keyboard", rows}};
     }
     return view;
@@ -134,9 +131,8 @@ bool RedPacketPanel::onClick(const PanelEvent& event, PanelEffects& effects) {
     }
 
     const auto cents = split(row->remainingCents, row->remainingCount);
-    const auto name = event.userName.empty()
-                          ? "用户" + std::to_string(event.userId)
-                          : event.userName;
+    const auto name =
+        event.userName.empty() ? "用户" + std::to_string(event.userId) : event.userName;
     if (!ledger_->grab(packetId_, event.userId, name, cents)) {
         effects.answer = "手慢了，红包派完了";
         return false;
@@ -146,14 +142,12 @@ bool RedPacketPanel::onClick(const PanelEvent& event, PanelEffects& effects) {
     return true;
 }
 
-std::optional<std::chrono::system_clock::time_point>
-RedPacketPanel::deadline() const {
+std::optional<std::chrono::system_clock::time_point> RedPacketPanel::deadline() const {
     const auto row = ledger_ ? ledger_->get(packetId_) : std::nullopt;
     if (!row.has_value() || row->state != "open") {
         return std::nullopt;
     }
-    return std::chrono::system_clock::time_point{
-        std::chrono::seconds{row->expiresAt}};
+    return std::chrono::system_clock::time_point{std::chrono::seconds{row->expiresAt}};
 }
 
 void RedPacketPanel::onDeadline(PanelEffects& /*effects*/) {
@@ -167,4 +161,4 @@ bool RedPacketPanel::finished() const {
     return !row.has_value() || row->state != "open";
 }
 
-}  // namespace tgbot
+} // namespace tgbot

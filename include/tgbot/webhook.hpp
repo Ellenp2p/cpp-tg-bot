@@ -16,15 +16,15 @@ namespace tgbot {
 //   后转发到本端口（公网部署常用，证书申请/续期交给反代）。
 //   反代必须把 X-Telegram-Bot-Api-Secret-Token 头透传过来。
 struct WebhookConfig {
-    std::string publicUrl;    // Telegram 投递地址，如 https://bot.example.com/hook
-    std::string secretToken;  // 可选；非空则校验 X-Telegram-Bot-Api-Secret-Token
+    std::string publicUrl;   // Telegram 投递地址，如 https://bot.example.com/hook
+    std::string secretToken; // 可选；非空则校验 X-Telegram-Bot-Api-Secret-Token
     // 监听地址。默认只监听回环：反代形态下明文端口不应该暴露在公网；
     // 需要直连或容器内网暴露时显式设成 "0.0.0.0"
     std::string host = "127.0.0.1";
     unsigned short port = 8080;
-    std::string tlsCert;      // PEM 证书链（与 tlsKey 同时设置才启用 TLS）
-    std::string tlsKey;       // PEM 私钥
-    int maxConnections = 40;  // Telegram 并发投递上限（官方默认 40）
+    std::string tlsCert;     // PEM 证书链（与 tlsKey 同时设置才启用 TLS）
+    std::string tlsKey;      // PEM 私钥
+    int maxConnections = 40; // Telegram 并发投递上限（官方默认 40）
 
     // 有界 update 队列 + per-chat lane + 固定 worker 协程
     std::size_t maxPendingUpdates = 2000;
@@ -47,8 +47,9 @@ struct WebhookConfig {
 //      → 按 per-chat lane + 固定 worker 协程处理（与长轮询同一套语义）
 // Telegram 对非 2xx 响应会自动重试；shuttingDown 置位后回 503 且不再派发，
 // 进程退出期间积压的 update 由下次启动的 drop_pending_updates 清掉。
-boost::asio::awaitable<void> webhookLoop(
-    BotClient& bot, Dispatcher& dispatcher, const WebhookConfig& config,
-    const std::atomic<bool>* shuttingDown = nullptr);
+boost::asio::awaitable<void> webhookLoop(BotClient& bot,
+                                         Dispatcher& dispatcher,
+                                         const WebhookConfig& config,
+                                         const std::atomic<bool>* shuttingDown = nullptr);
 
-}  // namespace tgbot
+} // namespace tgbot

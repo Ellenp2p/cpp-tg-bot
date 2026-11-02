@@ -23,4 +23,4 @@ public:
     virtual void erase(std::string_view key) = 0;
 };
 
-}  // namespace tgbot
+} // namespace tgbot

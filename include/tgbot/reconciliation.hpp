@@ -27,15 +27,14 @@ struct ReconciliationReport {
 class Reconciler {
 public:
     struct Options {
-        std::chrono::seconds minAge{120};       // 进入 refunding 多久后才值得查
-        std::int64_t stuckAfterSeconds = 600;   // 多久还没结果就判 stuck
+        std::chrono::seconds minAge{120};     // 进入 refunding 多久后才值得查
+        std::int64_t stuckAfterSeconds = 600; // 多久还没结果就判 stuck
         std::size_t batch = 50;
     };
 
     Reconciler(RedPacketLedger& ledger, ChainMonitor& monitor, Options options);
 
-    boost::asio::awaitable<ReconciliationReport> run(ChainProbe probe,
-                                                     AlertSink alert);
+    boost::asio::awaitable<ReconciliationReport> run(ChainProbe probe, AlertSink alert);
 
 private:
     RedPacketLedger& ledger_;
@@ -43,4 +42,4 @@ private:
     Options options_;
 };
 
-}  // namespace tgbot
+} // namespace tgbot

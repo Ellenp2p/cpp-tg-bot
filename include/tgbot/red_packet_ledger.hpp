@@ -25,11 +25,11 @@ struct RedPacketRow {
     //      → refunding（已抢占退款权）→ refunded
     // refunding 超时/超次数 → stuck（需要人看）
     std::string state;
-    std::int64_t createdAt = 0;  // unix 秒
-    std::int64_t expiresAt = 0;  // unix 秒
-    std::string txRef;           // 链上凭据（tx hash），广播一拿到就写
-    std::int64_t refundStartedAt = 0;  // 进入 refunding 的时刻
-    int refundAttempts = 0;            // 已经尝试退过几次
+    std::int64_t createdAt = 0;       // unix 秒
+    std::int64_t expiresAt = 0;       // unix 秒
+    std::string txRef;                // 链上凭据（tx hash），广播一拿到就写
+    std::int64_t refundStartedAt = 0; // 进入 refunding 的时刻
+    int refundAttempts = 0;           // 已经尝试退过几次
 };
 
 struct GrabRow {
@@ -53,8 +53,10 @@ public:
     RedPacketLedger(const RedPacketLedger&) = delete;
     RedPacketLedger& operator=(const RedPacketLedger&) = delete;
 
-    std::int64_t create(std::int64_t chatId, std::int64_t creatorId,
-                        std::int64_t totalCents, int count,
+    std::int64_t create(std::int64_t chatId,
+                        std::int64_t creatorId,
+                        std::int64_t totalCents,
+                        int count,
                         std::chrono::seconds ttl);
 
     std::optional<RedPacketRow> get(std::int64_t id) const;
@@ -62,8 +64,7 @@ public:
     bool hasGrabbed(std::int64_t id, std::int64_t userId) const;
 
     // 原子领取：成功返回 true；余额不足/已结束/重复领取都返回 false
-    bool grab(std::int64_t id, std::int64_t userId, std::string_view userName,
-              std::int64_t cents);
+    bool grab(std::int64_t id, std::int64_t userId, std::string_view userName, std::int64_t cents);
 
     // 绑定到具体消息（发出去之后才知道 message_id）
     void attachMessage(std::int64_t id, std::int64_t messageId);
@@ -71,8 +72,7 @@ public:
     // open → expired；返回 true 表示这次真的改了状态
     bool markExpired(std::int64_t id);
     // 列出"该退款"的红包：state='expired'，或 state='open' 但已过期
-    std::vector<RedPacketRow> listRefundable(std::int64_t nowSeconds,
-                                             std::size_t limit) const;
+    std::vector<RedPacketRow> listRefundable(std::int64_t nowSeconds, std::size_t limit) const;
     // open/expired → refunding；返回 true 才由你负责执行退款
     bool beginRefund(std::int64_t id);
     // 广播一拿到 hash 就立刻写（别等到确认，否则崩溃窗口就没法对账）
@@ -99,4 +99,4 @@ private:
     sqlite3* db_ = nullptr;
 };
 
-}  // namespace tgbot
+} // namespace tgbot

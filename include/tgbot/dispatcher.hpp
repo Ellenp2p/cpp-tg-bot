@@ -15,8 +15,7 @@ class Dispatcher {
 public:
     // handler 收到 (BotClient&, message)。json 必须按值传递：
     // dispatch 在 worker 协程里执行，传引用会在入队/挂起期间悬垂。
-    using MessageHandler = std::function<boost::asio::awaitable<void>(
-        BotClient&, nlohmann::json)>;
+    using MessageHandler = std::function<boost::asio::awaitable<void>(BotClient&, nlohmann::json)>;
 
     void onCommand(std::string command, MessageHandler handler);
     void onAnyMessage(MessageHandler handler);
@@ -32,8 +31,7 @@ public:
     // 典型用法是"群里只允许管理员用命令"——Telegram 没有服务端权限，必须在
     // 机器人这一层挡；放在这里可以保证不会漏掉某个新注册的命令。
     // msg 按值传入，守卫可以安全地 co_await（不要把它存起来跨调用使用）。
-    using CommandGuard = std::function<boost::asio::awaitable<bool>(
-        BotClient&, nlohmann::json)>;
+    using CommandGuard = std::function<boost::asio::awaitable<bool>(BotClient&, nlohmann::json)>;
     void setCommandGuard(CommandGuard guard);
 
     // 本 bot 的 username（getMe 拿到的那个，不带 @）。
@@ -41,8 +39,7 @@ public:
     // 不设置则保持旧行为（任何 @后缀 都当成本 bot 处理）。
     void setBotUsername(std::string username);
 
-    boost::asio::awaitable<void> dispatch(nlohmann::json update,
-                                          BotClient& bot);
+    boost::asio::awaitable<void> dispatch(nlohmann::json update, BotClient& bot);
 
     // 已入队但尚未处理完的 update 数（含队列中 + 正在执行）。
     // 优雅停机时用它判断"手里还有没有活"；入队 +1、handler 完成 -1。
@@ -60,4 +57,4 @@ private:
     std::atomic<int> inFlight_{0};
 };
 
-}  // namespace tgbot
+} // namespace tgbot

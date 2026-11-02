@@ -55,13 +55,14 @@ struct LongPollOptions {
 // - 401/403/404 这类永久错误直接上抛，交由调用方退出进程（别再无限刷日志）
 // shuttingDown 可选：置位后循环不再派发新 update（停机期间的消息由下次启动
 // 的积压清空兜底）。
-boost::asio::awaitable<void> longPollLoop(
-    BotClient& bot, Dispatcher& dispatcher,
-    const std::atomic<bool>* shuttingDown = nullptr);
+boost::asio::awaitable<void> longPollLoop(BotClient& bot,
+                                          Dispatcher& dispatcher,
+                                          const std::atomic<bool>* shuttingDown = nullptr);
 
 // 带配置的版本
-boost::asio::awaitable<void> longPollLoop(
-    BotClient& bot, Dispatcher& dispatcher, const LongPollOptions& options,
-    const std::atomic<bool>* shuttingDown = nullptr);
+boost::asio::awaitable<void> longPollLoop(BotClient& bot,
+                                          Dispatcher& dispatcher,
+                                          const LongPollOptions& options,
+                                          const std::atomic<bool>* shuttingDown = nullptr);
 
-}  // namespace tgbot
+} // namespace tgbot

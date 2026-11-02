@@ -27,10 +27,9 @@ std::int64_t nowSeconds() {
         .count();
 }
 
-}  // namespace
+} // namespace
 
-DeleteScheduler::DeleteScheduler(tgbot::BotClient& bot, Store& store,
-                                 Options options)
+DeleteScheduler::DeleteScheduler(tgbot::BotClient& bot, Store& store, Options options)
     : bot_(bot), store_(store), options_(std::move(options)) {}
 
 void DeleteScheduler::start(const net::any_io_executor& executor) {
@@ -47,33 +46,29 @@ net::awaitable<void> DeleteScheduler::bootstrapLoop() {
     if (options_.pinBackfill) {
         const auto chatIds = store_.chatsWithPendingDeletions();
         if (!chatIds.empty()) {
-            spdlog::info("pin backfill: checking {} chat(s) with pending "
-                         "deletions",
-                         chatIds.size());
+            spdlog::info(
+                "pin backfill: checking {} chat(s) with pending "
+                "deletions",
+                chatIds.size());
         }
         for (const auto chatId : chatIds) {
             try {
                 const auto chat = co_await bot_.getChat(chatId);
                 if (const auto pin = chat.find("pinned_message");
                     pin != chat.end() && pin->is_object()) {
-                    const auto pinnedId =
-                        pin->value("message_id", std::int64_t{0});
+                    const auto pinnedId = pin->value("message_id", std::int64_t{0});
                     if (pinnedId != 0) {
                         store_.markPinned(chatId, pinnedId, nowSeconds());
                         store_.cancelMessageDeletion(chatId, pinnedId);
-                        spdlog::info(
-                            "pin backfill protected: chat={} msg={}", chatId,
-                            pinnedId);
+                        spdlog::info("pin backfill protected: chat={} msg={}", chatId, pinnedId);
                     }
                 }
             } catch (const std::exception& e) {
                 // 群没了 / 机器人被踢：跳过，后面的删除任务会按失败处理
-                spdlog::warn("pin backfill getChat failed: chat={}: {}", chatId,
-                             e.what());
+                spdlog::warn("pin backfill getChat failed: chat={}: {}", chatId, e.what());
             }
             if (options_.pinBackfillIntervalMs > 0) {
-                co_await tgbot::co_sleep(
-                    std::chrono::milliseconds{options_.pinBackfillIntervalMs});
+                co_await tgbot::co_sleep(std::chrono::milliseconds{options_.pinBackfillIntervalMs});
             }
         }
     }
@@ -91,15 +86,17 @@ net::awaitable<void> DeleteScheduler::bootstrapLoop() {
         [self]() -> net::awaitable<void> { co_await self->janitorLoop(); },
         net::detached);
     spdlog::info("delete scheduler started: workers={}, global={}ms, chat={}ms",
-                 options_.workers, options_.globalIntervalMs,
+                 options_.workers,
+                 options_.globalIntervalMs,
                  options_.perChatIntervalMs);
 }
 
-void DeleteScheduler::schedule(std::int64_t chatId, std::int64_t messageId,
-                               std::string kind, std::int64_t dueAt,
+void DeleteScheduler::schedule(std::int64_t chatId,
+                               std::int64_t messageId,
+                               std::string kind,
+                               std::int64_t dueAt,
                                std::int64_t targetUserId) {
-    store_.addDeletion(chatId, messageId, std::move(kind), dueAt, nowSeconds(),
-                       targetUserId);
+    store_.addDeletion(chatId, messageId, std::move(kind), dueAt, nowSeconds(), targetUserId);
 }
 
 void DeleteScheduler::cancelChat(std::int64_t chatId) {
@@ -110,8 +107,7 @@ void DeleteScheduler::cancelKind(std::int64_t chatId, std::string_view kind) {
     store_.cancelKindDeletions(chatId, kind);
 }
 
-void DeleteScheduler::cancelMessage(std::int64_t chatId,
-                                    std::int64_t messageId) {
+void DeleteScheduler::cancelMessage(std::int64_t chatId, std::int64_t messageId) {
     store_.cancelMessageDeletion(chatId, messageId);
 }
 
@@ -129,10 +125,9 @@ net::awaitable<void> DeleteScheduler::workerLoop() {
         } catch (const std::exception& e) {
             // deleteOne 自己已经分类处理；这里只是最后一道保险，
             // 避免一条坏任务把 worker 整个带走。
-            spdlog::error("delete worker crashed on {}/{}: {}", job->chatId,
-                          job->messageId, e.what());
-            store_.retryDeletion(job->chatId, job->messageId,
-                                 nowSeconds() + 30, e.what());
+            spdlog::error(
+                "delete worker crashed on {}/{}: {}", job->chatId, job->messageId, e.what());
+            store_.retryDeletion(job->chatId, job->messageId, nowSeconds() + 30, e.what());
         }
     }
 }
@@ -143,8 +138,7 @@ net::awaitable<void> DeleteScheduler::deleteOne(DeletionJob job) {
     if (job.kind != "ephemeral" && job.kind != "bot_reply" &&
         store_.isPinned(job.chatId, job.messageId)) {
         store_.finishDeletion(job.chatId, job.messageId, true, "pinned");
-        spdlog::info("skip pinned message: chat={} msg={}", job.chatId,
-                     job.messageId);
+        spdlog::info("skip pinned message: chat={} msg={}", job.chatId, job.messageId);
         co_return;
     }
 
@@ -155,8 +149,7 @@ net::awaitable<void> DeleteScheduler::deleteOne(DeletionJob job) {
     if (job.kind != "ephemeral" && job.kind != "bot_reply" &&
         store_.isPinned(job.chatId, job.messageId)) {
         store_.finishDeletion(job.chatId, job.messageId, true, "pinned");
-        spdlog::info("skip pinned message: chat={} msg={}", job.chatId,
-                     job.messageId);
+        spdlog::info("skip pinned message: chat={} msg={}", job.chatId, job.messageId);
         co_return;
     }
 
@@ -166,17 +159,13 @@ net::awaitable<void> DeleteScheduler::deleteOne(DeletionJob job) {
 
     try {
         if (job.kind == "ephemeral") {
-            const auto ephemeralId =
-                job.messageId < 0 ? -job.messageId : job.messageId;
-            co_await bot_.deleteEphemeralMessage(job.chatId,
-                                                 job.targetUserId,
-                                                 ephemeralId);
+            const auto ephemeralId = job.messageId < 0 ? -job.messageId : job.messageId;
+            co_await bot_.deleteEphemeralMessage(job.chatId, job.targetUserId, ephemeralId);
         } else {
-            co_await bot_.apiCall(
-                "deleteMessage",
-                {{"chat_id", std::to_string(job.chatId)},
-                 {"message_id", std::to_string(job.messageId)}},
-                tgbot::RetryPolicy::kNoTransportRetry);
+            co_await bot_.apiCall("deleteMessage",
+                                  {{"chat_id", std::to_string(job.chatId)},
+                                   {"message_id", std::to_string(job.messageId)}},
+                                  tgbot::RetryPolicy::kNoTransportRetry);
         }
         finished = true;
     } catch (const tgbot::TelegramApiError& e) {
@@ -184,8 +173,7 @@ net::awaitable<void> DeleteScheduler::deleteOne(DeletionJob job) {
         if (e.errorCode == 400 && deleteErrorMeansGone(e.what())) {
             // 用户/管理员已经删了，或超过 48h 删除窗口：任务完成
             finished = true;
-            spdlog::debug("message already gone: chat={} msg={}", job.chatId,
-                          job.messageId);
+            spdlog::debug("message already gone: chat={} msg={}", job.chatId, job.messageId);
         } else if (e.errorCode == 400 || e.errorCode == 403) {
             failed = true;
         }
@@ -196,24 +184,25 @@ net::awaitable<void> DeleteScheduler::deleteOne(DeletionJob job) {
 
     if (finished) {
         store_.finishDeletion(job.chatId, job.messageId, true, error);
-        spdlog::debug("deleted {}: chat={} msg={}", job.kind, job.chatId,
-                      job.messageId);
+        spdlog::debug("deleted {}: chat={} msg={}", job.kind, job.chatId, job.messageId);
         co_return;
     }
 
     if (failed) {
         store_.finishDeletion(job.chatId, job.messageId, false, error);
         spdlog::warn("delete permanently failed: chat={} msg={} kind={}: {}",
-                     job.chatId, job.messageId, job.kind, error);
+                     job.chatId,
+                     job.messageId,
+                     job.kind,
+                     error);
         // ephemeral 回复删不掉只是界面残留，不值得半夜叫 owner
         if (job.kind != "ephemeral" && job.kind != "bot_reply" && job.kind != "command") {
             const auto now = nowSeconds();
             auto& last = lastAlertAt_[job.chatId];
             if (now - last > 3600) {
                 last = now;
-                co_await alert("⚠️ Warden 删除失败（群 " +
-                               std::to_string(job.chatId) + "）：" + error +
-                               "\n请检查我是否仍有「删除消息」管理员权限。");
+                co_await alert("⚠️ Warden 删除失败（群 " + std::to_string(job.chatId) + "）：" +
+                               error + "\n请检查我是否仍有「删除消息」管理员权限。");
             }
         }
         co_return;
@@ -222,28 +211,30 @@ net::awaitable<void> DeleteScheduler::deleteOne(DeletionJob job) {
     // 瞬态失败：指数退避，最多 maxAttempts 次
     if (job.attempts + 1 >= options_.maxAttempts) {
         store_.finishDeletion(job.chatId, job.messageId, false, error);
-        spdlog::warn("delete gave up after {} attempts: chat={} msg={} "
-                     "kind={}: {}",
-                     job.attempts + 1, job.chatId, job.messageId, job.kind,
-                     error);
+        spdlog::warn(
+            "delete gave up after {} attempts: chat={} msg={} "
+            "kind={}: {}",
+            job.attempts + 1,
+            job.chatId,
+            job.messageId,
+            job.kind,
+            error);
         if (job.kind != "ephemeral" && job.kind != "bot_reply" && job.kind != "command") {
             const auto now = nowSeconds();
             auto& last = lastAlertAt_[job.chatId];
             if (now - last > 3600) {
                 last = now;
-                co_await alert("⚠️ Warden 连续删除失败（群 " +
-                               std::to_string(job.chatId) + "）：" + error);
+                co_await alert("⚠️ Warden 连续删除失败（群 " + std::to_string(job.chatId) + "）：" +
+                               error);
             }
         }
         co_return;
     }
 
-    const auto backoff = std::min<std::int64_t>(
-        300, std::int64_t{5} * (job.attempts + 1));
-    store_.retryDeletion(job.chatId, job.messageId, nowSeconds() + backoff,
-                         error);
-    spdlog::warn("delete retry in {}s: chat={} msg={}: {}", backoff, job.chatId,
-                 job.messageId, error);
+    const auto backoff = std::min<std::int64_t>(300, std::int64_t{5} * (job.attempts + 1));
+    store_.retryDeletion(job.chatId, job.messageId, nowSeconds() + backoff, error);
+    spdlog::warn(
+        "delete retry in {}s: chat={} msg={}: {}", backoff, job.chatId, job.messageId, error);
 }
 
 net::awaitable<void> DeleteScheduler::pace(std::int64_t chatId) {
@@ -258,8 +249,7 @@ net::awaitable<void> DeleteScheduler::pace(std::int64_t chatId) {
         }
     }
     nextGlobal_ = when + std::chrono::milliseconds{options_.globalIntervalMs};
-    nextChat_[chatId] =
-        when + std::chrono::milliseconds{options_.perChatIntervalMs};
+    nextChat_[chatId] = when + std::chrono::milliseconds{options_.perChatIntervalMs};
     if (when > now) {
         co_await tgbot::co_sleep(when - now);
     }
@@ -278,8 +268,7 @@ net::awaitable<void> DeleteScheduler::janitorLoop() {
             bot_.pruneRateLimiter();
 
             // 进程级按群节流表：长时间没活动的群直接丢掉，避免只增不减。
-            const auto steadyCutoff =
-                std::chrono::steady_clock::now() - std::chrono::hours{24};
+            const auto steadyCutoff = std::chrono::steady_clock::now() - std::chrono::hours{24};
             for (auto it = nextChat_.begin(); it != nextChat_.end();) {
                 if (it->second < steadyCutoff) {
                     it = nextChat_.erase(it);
@@ -297,7 +286,8 @@ net::awaitable<void> DeleteScheduler::janitorLoop() {
             }
 
             spdlog::info("delete janitor: pending={}, failed={}",
-                         store_.pendingDeletions(), store_.failedDeletions());
+                         store_.pendingDeletions(),
+                         store_.failedDeletions());
         } catch (const std::exception& e) {
             spdlog::warn("delete janitor failed: {}", e.what());
         }
@@ -316,6 +306,4 @@ net::awaitable<void> DeleteScheduler::alert(std::string text) {
     }
 }
 
-}  // namespace warden
-
-
+} // namespace warden

@@ -19,12 +19,12 @@ namespace tgbot {
 struct RefundItem {
     std::int64_t packetId = 0;
     std::int64_t creatorId = 0;
-    std::int64_t cents = 0;  // 便于展示/对账
-    Amount amount;           // 链上最小单位（wei / token 最小单位）
+    std::int64_t cents = 0; // 便于展示/对账
+    Amount amount;          // 链上最小单位（wei / token 最小单位）
 };
 
 struct RefundBatch {
-    std::string id;  // 本地批次号，日志/对账用
+    std::string id; // 本地批次号，日志/对账用
     std::vector<RefundItem> items;
 
     Amount total() const;
@@ -46,8 +46,7 @@ using TxRefRecorder = std::function<void(std::string_view txRef)>;
 // 链下可以只是记账；链上就是一次批量转账（multisend / 合约 payout），
 // 比逐笔发交易省 gas、也省 RPC 往返。
 using BatchRefundHandler =
-    std::function<boost::asio::awaitable<RefundBatchResult>(
-        const RefundBatch&, TxRefRecorder)>;
+    std::function<boost::asio::awaitable<RefundBatchResult>(const RefundBatch&, TxRefRecorder)>;
 
 // 把"已经到期但没退"的红包合并成批次退款的链下框架。
 //
@@ -59,17 +58,18 @@ using BatchRefundHandler =
 class RefundService {
 public:
     struct Options {
-        int decimals = 18;          // 链上精度：ETH 18，USDT 6
-        std::size_t maxBatch = 50;  // 单批上限（一次交易别塞太多）
-        int maxAttempts = 5;        // 单笔重试上限，超了就 stuck + 告警
+        int decimals = 18;         // 链上精度：ETH 18，USDT 6
+        std::size_t maxBatch = 50; // 单批上限（一次交易别塞太多）
+        int maxAttempts = 5;       // 单笔重试上限，超了就 stuck + 告警
     };
 
-    RefundService(RedPacketLedger& ledger, ChainMonitor& monitor,
-                  Options options, AlertSink alert = {});
+    RefundService(RedPacketLedger& ledger,
+                  ChainMonitor& monitor,
+                  Options options,
+                  AlertSink alert = {});
 
     // 任务队列入口：不管触发的是哪个红包，都会把当前所有到期的合并处理
-    boost::asio::awaitable<void> handleJob(const JobRecord& job,
-                                           BatchRefundHandler handler);
+    boost::asio::awaitable<void> handleJob(const JobRecord& job, BatchRefundHandler handler);
 
     // 手动冲刷一批，返回本次成功退掉的红包数
     boost::asio::awaitable<std::size_t> flush(BatchRefundHandler handler);
@@ -85,4 +85,4 @@ private:
     std::uint64_t sequence_ = 0;
 };
 
-}  // namespace tgbot
+} // namespace tgbot

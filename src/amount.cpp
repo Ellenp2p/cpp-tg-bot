@@ -9,8 +9,7 @@ namespace tgbot {
 namespace {
 
 // 64×64 → 128
-void mul64(std::uint64_t a, std::uint64_t b, std::uint64_t& hi,
-           std::uint64_t& lo) {
+void mul64(std::uint64_t a, std::uint64_t b, std::uint64_t& hi, std::uint64_t& lo) {
     const auto a0 = a & 0xFFFFFFFFULL;
     const auto a1 = a >> 32;
     const auto b0 = b & 0xFFFFFFFFULL;
@@ -19,15 +18,16 @@ void mul64(std::uint64_t a, std::uint64_t b, std::uint64_t& hi,
     const auto p01 = a0 * b1;
     const auto p10 = a1 * b0;
     const auto p11 = a1 * b1;
-    const auto mid = (p00 >> 32) + (p01 & 0xFFFFFFFFULL) +
-                     (p10 & 0xFFFFFFFFULL);
+    const auto mid = (p00 >> 32) + (p01 & 0xFFFFFFFFULL) + (p10 & 0xFFFFFFFFULL);
     lo = (p00 & 0xFFFFFFFFULL) | (mid << 32);
     hi = p11 + (p01 >> 32) + (p10 >> 32) + (mid >> 32);
 }
 
-}  // namespace
+} // namespace
 
-Amount Amount::fromUint64(std::uint64_t value) { return Amount(0, value); }
+Amount Amount::fromUint64(std::uint64_t value) {
+    return Amount(0, value);
+}
 
 std::optional<Amount> Amount::parse(std::string_view decimal) {
     if (decimal.empty()) {
@@ -39,10 +39,9 @@ std::optional<Amount> Amount::parse(std::string_view decimal) {
             return std::nullopt;
         }
         try {
-            acc = acc.mulSmall(10) + Amount::fromUint64(
-                                         static_cast<std::uint64_t>(c - '0'));
+            acc = acc.mulSmall(10) + Amount::fromUint64(static_cast<std::uint64_t>(c - '0'));
         } catch (const std::exception&) {
-            return std::nullopt;  // 溢出
+            return std::nullopt; // 溢出
         }
     }
     return acc;
@@ -132,8 +131,7 @@ std::pair<Amount, std::uint64_t> Amount::divmod(std::uint64_t divisor) const {
         // remainder <<= 1，并把被除数的第 i 位塞进最低位
         remainderHi = (remainderHi << 1) | (remainderLo >> 63);
         remainderLo <<= 1;
-        const bool bit =
-            i >= 64 ? ((hi_ >> (i - 64)) & 1U) != 0 : ((lo_ >> i) & 1U) != 0;
+        const bool bit = i >= 64 ? ((hi_ >> (i - 64)) & 1U) != 0 : ((lo_ >> i) & 1U) != 0;
         if (bit) {
             remainderLo |= 1U;
         }
@@ -162,9 +160,8 @@ Amount Amount::randomBetween(const Amount& low, const Amount& high) const {
         return low + (high - low).divmod(2).first;
     }
     static thread_local std::mt19937_64 rng{std::random_device{}()};
-    std::uniform_int_distribution<std::uint64_t> dist(low.toUint64(),
-                                                      high.toUint64());
+    std::uniform_int_distribution<std::uint64_t> dist(low.toUint64(), high.toUint64());
     return Amount::fromUint64(dist(rng));
 }
 
-}  // namespace tgbot
+} // namespace tgbot

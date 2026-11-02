@@ -22,11 +22,10 @@ std::string formatRemaining(std::chrono::seconds left) {
     return std::to_string(minutes) + " 分 " + std::to_string(seconds) + " 秒";
 }
 
-}  // namespace
+} // namespace
 
 LotteryPanel::LotteryPanel(Config config)
-    : config_(std::move(config)),
-      deadline_(std::chrono::system_clock::now() + config_.duration) {}
+    : config_(std::move(config)), deadline_(std::chrono::system_clock::now() + config_.duration) {}
 
 std::chrono::seconds LotteryPanel::remaining() const {
     const auto left = deadline_ - std::chrono::system_clock::now();
@@ -68,12 +67,12 @@ PanelView LotteryPanel::render() const {
 
     if (!closed_) {
         nlohmann::json rows = nlohmann::json::array();
-        rows.push_back(nlohmann::json::array(
-            {{{"text", config_.joinLabel},
-              {"callback_data", PanelManager::callbackData("join")}}}));
-        rows.push_back(nlohmann::json::array(
-            {{{"text", config_.drawLabel},
-              {"callback_data", PanelManager::callbackData("draw")}}}));
+        rows.push_back(
+            nlohmann::json::array({{{"text", config_.joinLabel},
+                                    {"callback_data", PanelManager::callbackData("join")}}}));
+        rows.push_back(
+            nlohmann::json::array({{{"text", config_.drawLabel},
+                                    {"callback_data", PanelManager::callbackData("draw")}}}));
         view.keyboard = {{"inline_keyboard", rows}};
     }
     return view;
@@ -94,10 +93,8 @@ bool LotteryPanel::onClick(const PanelEvent& event, PanelEffects& effects) {
             return false;
         }
         participants_[event.userId] =
-            event.userName.empty() ? "用户" + std::to_string(event.userId)
-                                   : event.userName;
-        effects.answer =
-            "参加成功 🎉 你是第 " + std::to_string(participants_.size()) + " 位";
+            event.userName.empty() ? "用户" + std::to_string(event.userId) : event.userName;
+        effects.answer = "参加成功 🎉 你是第 " + std::to_string(participants_.size()) + " 位";
         return true;
     }
 
@@ -123,8 +120,7 @@ bool LotteryPanel::onClick(const PanelEvent& event, PanelEffects& effects) {
     return false;
 }
 
-std::optional<std::chrono::system_clock::time_point> LotteryPanel::deadline()
-    const {
+std::optional<std::chrono::system_clock::time_point> LotteryPanel::deadline() const {
     if (closed_) {
         return std::nullopt;
     }
@@ -159,15 +155,14 @@ void LotteryPanel::draw(PanelEffects& effects) {
     winners_.assign(ids.begin(), ids.begin() + static_cast<std::ptrdiff_t>(count));
 
     if (!config_.rewardPrivate) {
-        return;  // 默认只在群里公布名单，不私下发码
+        return; // 默认只在群里公布名单，不私下发码
     }
     for (const auto id : winners_) {
         PanelEffects::Private pm;
         pm.userId = id;
         // 私密消息走纯文本：sendEphemeralMessage 目前不带 parse_mode，
         // 塞 HTML 标签只会原样显示出来
-        pm.text = "🎉 恭喜中奖！\n奖品：" + config_.prize +
-                  "\n你的专属码：" + rewardFor(id) +
+        pm.text = "🎉 恭喜中奖！\n奖品：" + config_.prize + "\n你的专属码：" + rewardFor(id) +
                   "\n（这条消息只有你能看到，别转给别人）";
         effects.privateMessages.push_back(std::move(pm));
     }
@@ -182,4 +177,4 @@ std::string LotteryPanel::rewardFor(std::int64_t userId) const {
     return "GIFT-" + std::to_string(dist(rng_));
 }
 
-}  // namespace tgbot
+} // namespace tgbot
