@@ -75,21 +75,25 @@ std::vector<std::uint8_t> buildTransferTransaction(
 
     // expiration
     if (request.useValidDuring) {
-        // 从真实链上交易反推出的布局：
-        //   tag 2
-        //   Option<u64> min_epoch   (01 + u64)
-        //   Option<u64> max_epoch   (01 + u64)
-        //   Option<u64> min_timestamp (00)
-        //   Option<u64> max_timestamp (00)
-        //   Vec<u8> chain           (20 + 32 字节 genesis digest)
-        writer.uleb(2);
+        // 权威定义来自官方 TS SDK（@mysten/sui 2.38.0, dist/bcs/bcs.mjs）：
+        //   ValidDuring = {
+        //     minEpoch:     option(u64),
+        //     maxEpoch:     option(u64),
+        //     minTimestamp: option(u64),
+        //     maxTimestamp: option(u64),
+        //     chain:        ObjectDigest,  // = byteVector（长度前缀 + 32 字节）
+        //     nonce:        u32,           // 在 chain 之后
+        //   }
+        writer.uleb(2);  // TransactionExpiration::ValidDuring
         writer.uleb(1);
         writer.u64(request.minEpoch);
         writer.uleb(1);
         writer.u64(request.maxEpoch);
-        writer.boolean(false);
-        writer.boolean(false);
+        writer.boolean(false);  // minTimestamp: None
+        writer.boolean(false);  // maxTimestamp: None
+        // ObjectDigest 在 BCS 里是 byteVector（长度前缀 + 字节），不是固定数组
         writer.blob(std::span<const std::uint8_t>(request.chain));
+        writer.u32(request.expirationNonce);
     } else {
         writer.uleb(0);  // None
     }
