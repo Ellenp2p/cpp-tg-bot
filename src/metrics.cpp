@@ -203,16 +203,16 @@ void writeHistogram(std::ostringstream& out, HistogramFamily& family) {
             std::lock_guard sumLock(hist->sumMu);
             sum = hist->sum;
         }
-        out << family.name << "_sum{";
+        out << family.name << "_sum";
         if (!labels.empty()) {
-            out << labels;
+            out << '{' << labels << '}';
         }
-        out << "} " << std::setprecision(9) << sum << '\n';
-        out << family.name << "_count{";
+        out << ' ' << std::setprecision(9) << sum << '\n';
+        out << family.name << "_count";
         if (!labels.empty()) {
-            out << labels;
+            out << '{' << labels << '}';
         }
-        out << "} " << hist->count.load(std::memory_order_relaxed) << '\n';
+        out << ' ' << hist->count.load(std::memory_order_relaxed) << '\n';
     }
 }
 
