@@ -8,6 +8,7 @@
 #include "health.hpp"
 #include "media.hpp"
 #include "store.hpp"
+#include "warden_texts.hpp"
 
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/tcp.hpp>
@@ -101,6 +102,7 @@ void testHealthServer() {
 void testCommandPolicies();
 void testUpdateQueue();
 void testQueueBackpressure();
+void testBotTexts();
 
 int runTests() {
     using namespace warden;
@@ -264,6 +266,7 @@ int runTests() {
 
     testHealthServer();
     testCommandPolicies();
+    testBotTexts();
     testUpdateQueue();
     testQueueBackpressure();
 
@@ -329,6 +332,15 @@ void testQueueBackpressure() {
     }
     check(handled == 1, "only accepted update handled");
     check(dispatcher.inFlightUpdates() == 0, "backpressure queue drained");
+}
+
+void testBotTexts() {
+    const auto help = warden::helpText("MyBot", "my_bot");
+    check(help.find("MyBot") != std::string::npos, "help uses bot name");
+    check(help.find("Warden") == std::string::npos, "help does not hardcode Warden");
+    check(help.find("https://t.me/my_bot") != std::string::npos, "help uses current username");
+    const auto intro = warden::introText("MyBot");
+    check(intro.find("MyBot") != std::string::npos, "intro uses bot name");
 }
 
 void testCommandPolicies() {

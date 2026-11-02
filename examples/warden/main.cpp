@@ -107,12 +107,18 @@ net::awaitable<int> run(Config cfg) {
 
     std::int64_t botId = 0;
     std::string botUsername;
+    std::string botName;
     try {
         const auto me = co_await bot.getMe();
         botId = me.value("id", std::int64_t{0});
         botUsername = me.value("username", std::string{});
-        spdlog::info("Warden {} connected as @{} (id={}, instance={})",
+        botName = me.value("first_name", std::string{});
+        if (botName.empty()) {
+            botName = botUsername;
+        }
+        spdlog::info("Warden {} connected as {} (@{}, id={}, instance={})",
                      kWardenVersion,
+                     botName,
                      botUsername,
                      botId,
                      cfg.instanceId);
@@ -225,9 +231,9 @@ net::awaitable<int> run(Config cfg) {
             co_return co_await groupCommandGuard(b, *store, *sched, owners, *menus, msg);
         });
 
-    dispatcher.onMyChatMember([store, sched, menus, botId, knownChats](
+    dispatcher.onMyChatMember([store, sched, menus, botId, botName, knownChats](
                                   BotClient& b, const json mcm) -> net::awaitable<void> {
-        co_await handleMyChatMember(b, *store, *sched, *menus, botId, knownChats, mcm);
+        co_await handleMyChatMember(b, *store, *sched, *menus, botId, botName, knownChats, mcm);
     });
 
     // 未注册命令：只有明确 /foo@本bot 才删；/foo 和 /foo@OtherBot 不碰
@@ -305,8 +311,8 @@ net::awaitable<int> run(Config cfg) {
     // ---- /start /help ----
     dispatcher.onCommand(
         "start",
-        [store, sched, cfg, botUsername, startedAt](BotClient& b,
-                                                    const json msg) -> net::awaitable<void> {
+        [store, sched, cfg, botName, botUsername, startedAt](
+            BotClient& b, const json msg) -> net::awaitable<void> {
             const auto chatType = chatTypeOf(msg);
             const auto userId = msg.value("from", json::object()).value("id", std::int64_t{0});
             if (chatType == "private") {
@@ -316,7 +322,7 @@ net::awaitable<int> run(Config cfg) {
                 } else {
                     tgbot::SendOptions options;
                     options.parseMode = tgbot::ParseMode::kHtml;
-                    co_await b.sendMessage(chatIdOf(msg), helpText(botUsername), options);
+                    co_await b.sendMessage(chatIdOf(msg), helpText(botName, botUsername), options);
                 }
                 co_return;
             }
@@ -329,13 +335,13 @@ net::awaitable<int> run(Config cfg) {
                 tgbot::ParseMode::kHtml);
         });
 
-    dispatcher.onCommand("help",
-                         [botUsername](BotClient& b, const json msg) -> net::awaitable<void> {
-                             // commands.hpp 已把 /help 设为 privateOnly，群里被守卫拦掉
-                             tgbot::SendOptions options;
-                             options.parseMode = tgbot::ParseMode::kHtml;
-                             co_await b.sendMessage(chatIdOf(msg), helpText(botUsername), options);
-                         });
+    dispatcher.onCommand(
+        "help", [botName, botUsername](BotClient& b, const json msg) -> net::awaitable<void> {
+            // commands.hpp 已把 /help 设为 privateOnly，群里被守卫拦掉
+            tgbot::SendOptions options;
+            options.parseMode = tgbot::ParseMode::kHtml;
+            co_await b.sendMessage(chatIdOf(msg), helpText(botName, botUsername), options);
+        });
 
     // ---- /autodel ----
     dispatcher.onCommand(
@@ -467,7 +473,8 @@ net::awaitable<int> run(Config cfg) {
     // ---- 拥有者后台回调 ----
     dispatcher.onCallbackQuery(
         kCallbackPrefix,
-        [store, sched, cfg, botId, startedAt](BotClient& b, const json cq) -> net::awaitable<void> {
+        [store, sched, cfg, botId, botName, botUsername, startedAt](
+            BotClient& b, const json cq) -> net::awaitable<void> {
             const auto cqId = cq.value("id", std::string{});
             const auto user = cq.value("from", json::object());
             const auto userId = user.value("id", std::int64_t{0});
@@ -522,7 +529,8 @@ net::awaitable<int> run(Config cfg) {
             }
             if (action == "help") {
                 co_await answer("");
-                co_await show(helpText(""), dashboardKeyboard(), tgbot::ParseMode::kHtml);
+                co_await show(
+                    helpText(botName, botUsername), dashboardKeyboard(), tgbot::ParseMode::kHtml);
                 co_return;
             }
             if (action.rfind("list:", 0) == 0) {

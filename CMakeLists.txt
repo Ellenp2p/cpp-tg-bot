@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.25)
 project(tg_bot_framework VERSION 0.2.0 LANGUAGES CXX)
 
+# Warden 独立版本号；release workflow 会传入对应 tag 的版本。
+set(WARDEN_VERSION "0.1.0" CACHE STRING "Warden application version")
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -173,6 +176,7 @@ if(TGBOT_BUILD_EXAMPLES)
         examples/warden/health.cpp)
     target_link_libraries(warden PRIVATE tgbot)
     target_include_directories(warden PRIVATE examples/warden)
+    target_compile_definitions(warden PRIVATE WARDEN_VERSION="${WARDEN_VERSION}")
     if(EXISTS "${TGBOT_CACERT_PATH}")
         add_custom_command(TARGET warden POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
