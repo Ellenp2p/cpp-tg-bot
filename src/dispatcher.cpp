@@ -46,6 +46,20 @@ void Dispatcher::onCallbackQuery(std::string dataPrefix,
     callbackQueries_.emplace(std::move(dataPrefix), std::move(handler));
 }
 
+void Dispatcher::onMyChatMember(MessageHandler handler) {
+    myChatMember_ = std::move(handler);
+}
+
+void Dispatcher::setCommandGuard(CommandGuard guard) {
+    commandGuard_ = std::move(guard);
+}
+
+void Dispatcher::beginUpdate() { inFlight_.fetch_add(1); }
+
+void Dispatcher::endUpdate() { inFlight_.fetch_sub(1); }
+
+int Dispatcher::inFlightUpdates() const { return inFlight_.load(); }
+
 void Dispatcher::setBotUsername(std::string username) {
     if (!username.empty() && username.front() == '@') {
         username.erase(username.begin());
@@ -54,6 +68,20 @@ void Dispatcher::setBotUsername(std::string username) {
 }
 
 boost::asio::awaitable<void> Dispatcher::dispatch(json update, BotClient& bot) {
+    // 机器人自身成员变化（被拉群/被提权/被踢）：与 message 同级，先处理
+    if (const auto mcmIt = update.find("my_chat_member");
+        mcmIt != update.end()) {
+        if (myChatMember_) {
+            json mcm = *mcmIt;
+            try {
+                co_await myChatMember_(bot, std::move(mcm));
+            } catch (const std::exception& e) {
+                spdlog::error("my_chat_member handler failed: {}", e.what());
+            }
+        }
+        co_return;
+    }
+
     // 回调查询：按 callback_data 最长前缀匹配；cq 按值持有，避免悬垂
     if (const auto cqIt = update.find("callback_query");
         cqIt != update.end()) {
@@ -109,10 +137,28 @@ boost::asio::awaitable<void> Dispatcher::dispatch(json update, BotClient& bot) {
         }
         if (const auto it = commands_.find(command); it != commands_.end()) {
             if (suffixAt != std::string::npos) {
+                // 保留“这条命令明确 @ 了本 bot”的标记，供 handler/guard
+                // 区分“/cmd”和“/cmd@ThisBot”。
+                msg["_tgbot_command_mentioned"] = true;
                 // 归一化文本：去掉命令里的 @BotName，
                 // handler 侧解析参数时无需关心这种形式
                 msg["text"].get_ref<std::string&>().erase(1 + suffixAt,
                                                           suffix.size());
+            }
+            if (commandGuard_) {
+                bool allowed = false;
+                try {
+                    allowed = co_await commandGuard_(bot, msg);
+                } catch (const std::exception& e) {
+                    // 守卫自己炸了：按拒绝处理（fail closed），绝不因为
+                    // "查不到权限"就把管理命令放进来
+                    spdlog::error("command guard for /{} failed: {}", command,
+                                  e.what());
+                    co_return;
+                }
+                if (!allowed) {
+                    co_return;
+                }
             }
             try {
                 co_await it->second(bot, msg);

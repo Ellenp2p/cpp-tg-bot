@@ -13,6 +13,7 @@ src/               框架实现（编译为静态库 tgbot）
 examples/
   echo_bot/        演示机器人：回声 / /start / inline 键盘
   group_admin/     群管理机器人：贴纸 60 秒自动过期，/sticker on|off 群管理员控制
+  warden/          群务管家：多类型媒体定时清理 + 持久化任务队列 + 拥有者后台
 ```
 
 最小机器人长这样：
@@ -47,6 +48,7 @@ boost::asio::awaitable<void> run(const std::string& token) {
 - [x] M7：框架化（`tgbot` 静态库 + `include/tgbot` 公共头 + examples 结构），新增 `deleteMessage` / `getChatMember` / `co_sleep`，附群管理机器人示例
 - [x] M8：webhook 模式（`webhookLoop`，Boost.Beast HTTP/1.1 服务端，TLS 直连或反代两种形态，secret token 校验，与长轮询共用 Dispatcher 和按 chat strand 串行语义）
 - [x] M10：稳定性修复（offset 原子写跨平台、CA 证书运行时定位、409 自动清理残留 webhook、永久错误退出、限速器突发超速、webhook 协程生命周期、写操作不重试传输错误）
+- [x] M11：Warden 群务管家（`my_chat_member` 群登记、命令前置守卫 `setCommandGuard`、`leaveChat` / `getChatAdministrators`、webhook 显式 `allowed_updates`；调度删除 + 崩溃恢复 + 拥有者私聊后台）
 
 ### 长轮询的"停机语义"（重要）
 
@@ -94,7 +96,7 @@ co_await tgbot::webhookLoop(bot, dispatcher, cfg, &gShuttingDown);
 
 - Telegram 以 HTTP/1.1 POST 投递 update，非 2xx 会自动重试；停机期间回 503 且不再派发，积压由下次启动的 `drop_pending_updates` 清掉（与长轮询"停机即停止"语义一致）
 - 监听地址默认 `127.0.0.1`（反代形态不该把明文端口暴露在公网）；要直连或容器内暴露用 `WEBHOOK_HOST=0.0.0.0`
-- 本地自测接收端：`registerOnStart = false`（group_admin 用 `TG_WEBHOOK_SKIP_REGISTER=1`），不碰真实 webhook 配置，直接向本地端口伪造 POST 即可
+- 本地自测接收端：`registerOnStart = false`（group_admin 用 `TG_WEBHOOK_SKIP_REGISTER=true`），不碰真实 webhook 配置，直接向本地端口伪造 POST 即可
 - 与 `getUpdates` 互斥；`maxConnections` 默认 40（Telegram 并发投递上限）
 - 从 webhook 模式切回长轮询**不需要手工操作**：长轮询遇到 409 会先 `deleteWebhook` 再重试，日志里会明确写出来
 
@@ -114,7 +116,7 @@ co_await tgbot::webhookLoop(bot, dispatcher, cfg, &gShuttingDown);
 >
 > ```bash
 > cmd //c setup.bat    # 新机器一键初始化（见下）
-> cmd //c build-app.bat # 日常开发：增量编译，产出 build/Release/{echo_bot,group_admin}.exe
+> cmd //c build-app.bat # 日常开发：增量编译，产出 build/Release/{echo_bot,group_admin,warden}.exe
 > ```
 
 1. 在 Telegram 找 [@BotFather](https://t.me/BotFather) 创建 Bot，拿到 token
@@ -172,6 +174,25 @@ export TG_BOT_TOKEN=<你的token> && ./build/group_admin
 看到 `Connected as @<你的bot用户名>` 即启动成功。把它拉进群、设为管理员后，
 群里发 `/sticker on` 开启贴纸 60 秒自动过期，`/sticker off` 关闭
 （仅群管理员可开关，设置存 `group_admin_state.db`，SQLite 持久化，重启不丢）。
+
+### Warden（群务管家）
+
+`examples/warden/` 是比 `group_admin` 更完整的群管机器人：贴纸/图片/视频/语音
+等媒体按类型、按群设置时限自动删除；任务落 SQLite，停机/崩溃后重启会把逾期
+任务补删；拥有者私聊 `/panel` 查看机器人所在的所有群、权限清单、启停功能、
+取消待删、退群。群内命令与回复走 ephemeral（仅操作者可见）；**群里的命令仅
+群管理员可用，非管理员发来的命令会被静默忽略**（`Dispatcher::setCommandGuard`
+实时校验 `getChatMember`，不回复、不产生副作用）；命令菜单也按
+`chat_administrators` 作用域发布，普通成员在群里连 `/` 菜单都看不到这些命令。
+删除连续失败可同时告警到 owner 私聊、飞书自定义机器人、Discord webhook。
+
+```bash
+TG_BOT_TOKEN=<token> WARDEN_OWNERS=<你的用户ID> ./build/Release/warden
+```
+
+完整命令、环境变量、架构与已知限制见
+[examples/warden/README.md](examples/warden/README.md)；零停机热更新设计见
+[examples/warden/HOT_UPDATE.md](examples/warden/HOT_UPDATE.md)。
 
 ## 富文本与流式输出
 
@@ -391,7 +412,7 @@ callback 最长前缀匹配、`RateLimiter` 的时间槽间隔（同聊天 ≥1s
   - `macos-arm64`、`windows-x64`（静态 CRT + vcpkg 静态 triplet）
 - 发布触发 [Release](.github/workflows/release.yml)，两种方式：
   - **手动（推荐）**：Actions → Release → Run workflow，选择机器人
-    （group_admin / echo_bot / both）+ 版本号即可，不用手打 tag
+    （group_admin / echo_bot / warden / both）+ 版本号即可，不用手打 tag
   - **打 tag**：`group_admin-v0.0.1` / `echo_bot-v0.0.1` 只发对应机器人，
     `v0.2.0` 发全部
 - 只编译目标机器人（tgbot 库作为依赖自动编，另一个示例不编）；
@@ -434,3 +455,4 @@ callback 最长前缀匹配、`RateLimiter` 的时间槽间隔（同聊天 ≥1s
 - macOS 因系统限制无法静态链接系统库，产物为普通动态二进制
 - 运行时状态文件（`tg_bot.offset` / `group_admin_state.db*`）属于部署数据，
   已加入 `.gitignore`，别再提交进仓库
+

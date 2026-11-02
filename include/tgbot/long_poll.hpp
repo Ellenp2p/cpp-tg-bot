@@ -4,6 +4,7 @@
 #include <tgbot/dispatcher.hpp>
 
 #include <atomic>
+#include <cstddef>
 #include <string>
 
 namespace tgbot {
@@ -23,6 +24,10 @@ struct LongPollOptions {
 
     // getUpdates 长轮询超时（秒）：没有新消息时一个循环会阻塞这么久
     int pollTimeoutSeconds = 30;
+
+    // 有界 update 队列 + per-chat lane + 固定 worker 协程
+    std::size_t maxPendingUpdates = 2000;
+    int updateWorkers = 8;
 
     // 订阅的 update 类型（JSON 数组字符串）。默认只有 message/callback_query；
     // 需要 edited_message / chat_member / inline_query / message_reaction 等
@@ -44,7 +49,7 @@ struct LongPollOptions {
     PermanentErrorPolicy permanentErrorPolicy = PermanentErrorPolicy::kExit;
 };
 
-// 长轮询主循环：每个 update co_spawn 独立协程处理，按 chat strand 串行。
+// 长轮询主循环：update 入有界队列，按 chat lane 串行 + 固定 worker 协程处理。
 // - 连接失败指数退避重试（1s→30s）
 // - 409 会先尝试 deleteWebhook（残留 webhook 是 409 最常见的成因）再重试
 // - 401/403/404 这类永久错误直接上抛，交由调用方退出进程（别再无限刷日志）

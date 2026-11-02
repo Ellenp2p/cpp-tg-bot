@@ -159,13 +159,17 @@ net::awaitable<void> longPollLoopImpl(BotClient& bot, Dispatcher& dispatcher,
     // 指数退避：1s -> 2s -> 4s ... 封顶 30s，成功一次即重置
     auto backoff = std::chrono::seconds{1};
 
-    // 每个 chat 一个 strand：同一聊天的 update 串行处理（handler 执行与
-    // 挂起期间都不会被同聊天的新 update 打断），不同聊天之间仍然并发。
-    // 所有 strand 跑在同一个 io_context 线程上，无锁。
-    // 与 webhook 模式共用 detail::ChatStrands（src/chat_dispatch_util.hpp）。
-    detail::ChatStrands chatStrands(executor);
+    // 有界队列 + per-chat lane + 固定 worker：同一聊天的 update 串行，
+    // 不同聊天由多个 worker 并发；全部在同一个 io_context 线程，无锁。
+    // 与 webhook 模式共用 detail::UpdateWorkers（src/chat_dispatch_util.hpp）。
+    detail::UpdateWorkers updateWorkers(executor, opts.maxPendingUpdates,
+                                        opts.updateWorkers);
 
     while (true) {
+        if (shuttingDown != nullptr && shuttingDown->load()) {
+            spdlog::info("shutting down, stop polling");
+            co_return;
+        }
         nlohmann::json updates;
         std::string error;
         long errorCode = 0;
@@ -225,20 +229,32 @@ net::awaitable<void> longPollLoopImpl(BotClient& bot, Dispatcher& dispatcher,
         }
         backoff = std::chrono::seconds{1};
 
-        // 停机中：忽略所有新到的 update，不再派发（不推进 offset 文件，
-        // 也不触发任何业务副作用；下次启动的积压清空会把它们丢掉）
+        // 停机中：不再派发、也不推进 offset。这些 update 没被确认，
+        // 下次启动（dropPendingUpdates=false）会重新收到。
         if (shuttingDown != nullptr && shuttingDown->load()) {
-            spdlog::info("shutting down, ignoring {} update(s)", updates.size());
-            continue;
+            spdlog::info("shutting down, leaving {} update(s) unacknowledged",
+                         updates.size());
+            co_return;
         }
 
+        bool queueFull = false;
         for (const auto& update : updates) {
+            if (!updateWorkers.dispatch(update, bot, dispatcher)) {
+                // 有界队列满：不推进 offset、不 ack 这条 update，下一轮重收。
+                queueFull = true;
+                break;
+            }
             offset = std::max(offset,
                               update.value("update_id", std::int64_t{0}) + 1);
-            chatStrands.dispatch(update, bot, dispatcher);
         }
         if (!updates.empty()) {
             saveOffset(opts.offsetFile, offset);
+        }
+        if (queueFull) {
+            spdlog::debug("update queue full (pending={}/{}), pause intake",
+                          updateWorkers.pending(), updateWorkers.maxPending());
+            net::steady_timer timer(executor, std::chrono::milliseconds{50});
+            co_await timer.async_wait(net::use_awaitable);
         }
     }
 }

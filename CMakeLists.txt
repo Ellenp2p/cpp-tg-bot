@@ -127,6 +127,15 @@ if(TGBOT_BUILD_TESTS)
     add_executable(tgbot_tests tests/tests.cpp)
     target_link_libraries(tgbot_tests PRIVATE tgbot)
     add_test(NAME tgbot_tests COMMAND tgbot_tests)
+
+    # Warden 的持久层/解析函数（不需要 Telegram 网络）
+    add_executable(warden_tests
+        tests/warden_tests.cpp
+        examples/warden/store.cpp
+        examples/warden/health.cpp)
+    target_link_libraries(warden_tests PRIVATE tgbot)
+    target_include_directories(warden_tests PRIVATE examples/warden)
+    add_test(NAME warden_tests COMMAND warden_tests)
 endif()
 
 # ---- 示例机器人 ----
@@ -148,6 +157,21 @@ if(TGBOT_BUILD_EXAMPLES)
         add_custom_command(TARGET group_admin POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${TGBOT_CACERT_PATH}" $<TARGET_FILE_DIR:group_admin>)
+    endif()
+
+    # Warden：多类型媒体定时清理 + 持久化任务队列 + 拥有者私聊后台
+    add_executable(warden
+        examples/warden/main.cpp
+        examples/warden/store.cpp
+        examples/warden/scheduler.cpp
+        examples/warden/alerts.cpp
+        examples/warden/health.cpp)
+    target_link_libraries(warden PRIVATE tgbot)
+    target_include_directories(warden PRIVATE examples/warden)
+    if(EXISTS "${TGBOT_CACERT_PATH}")
+        add_custom_command(TARGET warden POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${TGBOT_CACERT_PATH}" $<TARGET_FILE_DIR:warden>)
     endif()
 endif()
 
