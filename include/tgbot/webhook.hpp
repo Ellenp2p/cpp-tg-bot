@@ -28,6 +28,7 @@ struct WebhookConfig {
 
     // 有界 update 队列 + per-chat lane + 固定 worker 协程
     std::size_t maxPendingUpdates = 2000;
+    std::size_t maxPendingBytes = 32 * 1024 * 1024;
     int updateWorkers = 8;
     // 启动时清空积压 updates（"停机即完全停止"语义，与长轮询模式一致）
     bool dropPendingUpdates = true;

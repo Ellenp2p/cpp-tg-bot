@@ -27,6 +27,7 @@ struct LongPollOptions {
 
     // 有界 update 队列 + per-chat lane + 固定 worker 协程
     std::size_t maxPendingUpdates = 2000;
+    std::size_t maxPendingBytes = 32 * 1024 * 1024;
     int updateWorkers = 8;
 
     // 订阅的 update 类型（JSON 数组字符串）。默认只有 message/callback_query；
