@@ -168,6 +168,10 @@
         {
           "expr": "warden_event_loop_lag_seconds",
           "legendFormat": "event loop lag"
+        },
+        {
+          "expr": "rate(warden_process_cpu_seconds_total[1m]) * 100",
+          "legendFormat": "CPU % (one core)"
         }
       ],
       "title": "Runtime",
