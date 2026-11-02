@@ -1,5 +1,6 @@
 #pragma once
 #include <spdlog/spdlog.h>
+#include <tgbot/metrics.hpp>
 #include "scheduler.hpp"
 #include "warden_types.hpp"
 #include "warden_util.hpp"
@@ -26,6 +27,7 @@ inline net::awaitable<void> replyEphemeral(BotClient& bot,
     options.replyToMessageId = triggerId;
     if (chatTypeOf(msg) == "private") {
         co_await bot.sendMessage(chatId, text, options);
+        tgbot::metrics::reply("private");
         co_return;
     }
 
@@ -57,6 +59,7 @@ inline net::awaitable<void> replyEphemeral(BotClient& bot,
                         e.what());
                 }
             }
+            tgbot::metrics::reply("ephemeral");
             co_return;
         } catch (const std::exception& e) {
             spdlog::info(
@@ -83,6 +86,7 @@ inline net::awaitable<void> replyEphemeral(BotClient& bot,
                     e.what());
             }
         }
+        tgbot::metrics::reply("public");
         co_return;
     } catch (const std::exception& e) {
         spdlog::debug("public fallback failed (chat={}): {}", chatId, e.what());
@@ -106,6 +110,7 @@ inline net::awaitable<void> replyEphemeral(BotClient& bot,
                     e.what());
             }
         }
+        tgbot::metrics::reply("private");
         co_return;
     } catch (const std::exception& e) {
         spdlog::debug("private fallback failed (user={}): {}", userId, e.what());

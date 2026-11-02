@@ -328,6 +328,7 @@ TG_WEBHOOK_SECRET=随机串 WEBHOOK_HOST=127.0.0.1 WEBHOOK_PORT=8080 \
   ```bash
   curl -fsS http://127.0.0.1:9090/healthz   # 进程活着
   curl -fsS http://127.0.0.1:9090/readyz    # 可以接流量；drain 中 503
+  curl -fsS http://127.0.0.1:9090/metrics   # Prometheus 指标
   curl -X POST -H "X-Warden-Token: $TOKEN" \
        http://127.0.0.1:9090/drain          # 优雅停机
   ```
@@ -337,6 +338,58 @@ TG_WEBHOOK_SECRET=随机串 WEBHOOK_HOST=127.0.0.1 WEBHOOK_PORT=8080 \
   停掉。留空 = 禁用 `/drain`（返回 403），此时仍可以用 SIGTERM 停机。健康检查
   `GET /healthz`、`GET /readyz` 不需要这个 token；它们默认只监听回环地址，
   不要直接暴露公网。
+
+#### Prometheus 监控
+
+`GET /metrics` 暴露 Prometheus text format。示例配置在
+[deploy/monitoring/prometheus.yml](../../deploy/monitoring/prometheus.yml)，
+告警规则在 [deploy/monitoring/alerts.yml](../../deploy/monitoring/alerts.yml)。
+
+最常用的曲线：
+
+```promql
+# 每秒收到的 update
+sum(rate(warden_updates_received_total[1m]))
+
+# 按类型
+sum by (type) (rate(warden_updates_received_total[1m]))
+
+# 每秒发出的 Telegram API 请求
+sum(rate(warden_telegram_requests_total[1m]))
+
+# 按方法
+sum by (method) (rate(warden_telegram_requests_total[1m]))
+
+# 队列饱和度
+warden_update_queue_depth / warden_update_queue_capacity
+
+# API 错误率
+sum(rate(warden_telegram_errors_total[5m]))
+/
+sum(rate(warden_telegram_requests_total[5m]))
+
+# 待删任务
+warden_deletions_pending
+
+# 进程 RSS
+warden_process_resident_memory_bytes
+```
+
+指标包括：
+
+- `warden_updates_received_total{type=...}` / `accepted` / `rejected`
+- `warden_update_queue_depth`、`_bytes`、`_capacity`
+- `warden_worker_busy`、`warden_worker_count`
+- `warden_update_wait_seconds`、`warden_update_handle_seconds`
+- `warden_telegram_requests_total{method=...}`
+- `warden_telegram_request_seconds`、`429`、`errors`、`retries`、`inflight`
+- `warden_deletions_pending`、`warden_deletions_finished_total{result=...}`
+- `warden_commands_total{command=...}`、`warden_replies_total{channel=...}`
+- `warden_process_resident_memory_bytes`、`warden_event_loop_lag_seconds`
+
+指标标签只使用方法名、update 类型、命令名等固定集合，不使用 `chat_id`，避免
+Prometheus 基数爆炸。
+
 - 单实例：同一个 token 不能同时跑长轮询和 webhook；SQLite 也不适合多进程
   共享。高负载靠单进程异步 + 限流，不靠多开。
 

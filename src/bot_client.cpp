@@ -1,4 +1,5 @@
 #include <tgbot/bot_client.hpp>
+#include <tgbot/metrics.hpp>
 
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/this_coro.hpp>
@@ -65,6 +66,36 @@ net::awaitable<json> BotClient::apiCall(const std::string& method,
                                         std::map<std::string, std::string> params,
                                         RetryPolicy policy,
                                         std::chrono::seconds ioTimeout) {
+    const auto startedAt = std::chrono::steady_clock::now();
+    metrics::telegramRequestStarted(method);
+    try {
+        auto result = co_await apiCallImpl(method, std::move(params), policy, ioTimeout);
+        metrics::telegramRequestFinished(
+            method,
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - startedAt).count(),
+            true);
+        co_return result;
+    } catch (const TelegramApiError& e) {
+        metrics::telegramError(method, e.errorCode);
+        metrics::telegramRequestFinished(
+            method,
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - startedAt).count(),
+            false);
+        throw;
+    } catch (...) {
+        metrics::telegramError(method, 0);
+        metrics::telegramRequestFinished(
+            method,
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - startedAt).count(),
+            false);
+        throw;
+    }
+}
+
+net::awaitable<json> BotClient::apiCallImpl(const std::string& method,
+                                            std::map<std::string, std::string> params,
+                                            RetryPolicy policy,
+                                            std::chrono::seconds ioTimeout) {
     // 参数走 POST 表单 body：URL 里只剩 token + 方法名。
     // 用 GET 拼 query 时，4096 字的 text 百分号编码后能膨胀到 ~12KB，
     // 撞上服务端 URL 长度上限就是一发 414。
@@ -124,6 +155,7 @@ net::awaitable<json> BotClient::apiCall(const std::string& method,
             }
             // 429 时优先遵循 Telegram 返回的 retry_after，而不是自己的退避
             if (resp.status == 429) {
+                metrics::telegram429(method);
                 try {
                     const auto j = json::parse(resp.body);
                     retryAfterSec = j.value("parameters", json::object()).value("retry_after", 0L);
@@ -158,6 +190,7 @@ net::awaitable<json> BotClient::apiCall(const std::string& method,
         if (retryAfterSec > 0) {
             delay = std::chrono::seconds{retryAfterSec + 1};
         }
+        metrics::telegramRetry(method);
         spdlog::warn(
             "apiCall {} failed (attempt {}), retry in {}s", method, attempt, delay.count());
         net::steady_timer timer(co_await net::this_coro::executor, delay);

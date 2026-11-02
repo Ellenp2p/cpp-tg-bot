@@ -40,6 +40,7 @@ add_library(tgbot STATIC
     src/dispatcher.cpp
     src/grab_queue.cpp
     src/job_queue.cpp
+    src/metrics.cpp
     src/long_poll.cpp
     src/lottery_panel.cpp
     src/panel.cpp
@@ -68,6 +69,10 @@ target_link_libraries(tgbot PUBLIC
     unofficial::sqlite3::sqlite3
     Threads::Threads
 )
+
+if(WIN32)
+    target_link_libraries(tgbot PUBLIC psapi)
+endif()
 
 # 源码是 UTF-8，MSVC 需要显式指定，否则中文/宽字符字符串字面量会乱码
 # /bigobj：webhook.cpp 的模板协程在 Debug(/Od) 下会触发 C1128（对象节数超限），

@@ -1,9 +1,12 @@
 #include "store.hpp"
 
+#include <tgbot/metrics.hpp>
+
 #include <spdlog/spdlog.h>
 #include <sqlite3.h>
 
 #include <algorithm>
+#include <chrono>
 #include <ctime>
 #include <stdexcept>
 #include <string>
@@ -404,12 +407,24 @@ void Store::maintenance(std::int64_t now) {
     }
 }
 
+namespace {
+struct DbMetricTimer {
+    const char* op;
+    std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
+    ~DbMetricTimer() {
+        tgbot::metrics::observeDbWrite(
+            op, std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count());
+    }
+};
+} // namespace
+
 void Store::addDeletion(std::int64_t chatId,
                         std::int64_t messageId,
                         std::string kind,
                         std::int64_t dueAt,
                         std::int64_t now,
                         std::int64_t targetUserId) {
+    DbMetricTimer metric{"add"};
     Stmt stmt(db_,
               "INSERT INTO deletions("
               "chat_id,message_id,target_user,kind,due_at,attempts,state,"
@@ -429,6 +444,7 @@ void Store::addDeletion(std::int64_t chatId,
 }
 
 std::optional<DeletionJob> Store::claimDeletion(std::int64_t now) {
+    DbMetricTimer metric{"claim"};
     exec("BEGIN IMMEDIATE");
     DeletionJob job;
     bool found = false;
@@ -468,6 +484,7 @@ void Store::finishDeletion(std::int64_t chatId,
                            std::int64_t messageId,
                            bool ok,
                            std::string_view error) {
+    DbMetricTimer metric{"finish"};
     // 只允许 inflight → done/failed：任务被 /autodel off 取消后，
     // 迟到的 worker 不能把已删除的行重新标成完成/失败
     Stmt stmt(db_,
@@ -486,6 +503,7 @@ void Store::retryDeletion(std::int64_t chatId,
                           std::int64_t messageId,
                           std::int64_t nextDue,
                           std::string_view error) {
+    DbMetricTimer metric{"retry"};
     Stmt stmt(db_,
               "UPDATE deletions SET state='pending', due_at=?,"
               " attempts=attempts+1, last_error=?"

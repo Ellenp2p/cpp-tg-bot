@@ -1,0 +1,194 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "graphTooltip": 1,
+  "panels": [
+    {
+      "datasource": null,
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "targets": [
+        {
+          "expr": "sum(rate(warden_updates_received_total[1m]))",
+          "legendFormat": "updates/s"
+        },
+        {
+          "expr": "sum(rate(warden_updates_accepted_total[1m]))",
+          "legendFormat": "accepted/s"
+        }
+      ],
+      "title": "Updates received / accepted",
+      "type": "timeseries"
+    },
+    {
+      "datasource": null,
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "id": 2,
+      "targets": [
+        {
+          "expr": "warden_update_queue_depth",
+          "legendFormat": "queued"
+        },
+        {
+          "expr": "warden_update_queue_bytes",
+          "legendFormat": "queued bytes"
+        },
+        {
+          "expr": "warden_worker_busy",
+          "legendFormat": "busy workers"
+        }
+      ],
+      "title": "Queue and workers",
+      "type": "timeseries"
+    },
+    {
+      "datasource": null,
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "id": 3,
+      "targets": [
+        {
+          "expr": "sum by (method) (rate(warden_telegram_requests_total[1m]))",
+          "legendFormat": "{{method}}"
+        }
+      ],
+      "title": "Telegram API requests",
+      "type": "timeseries"
+    },
+    {
+      "datasource": null,
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "id": 4,
+      "targets": [
+        {
+          "expr": "sum(rate(warden_telegram_errors_total[5m])) / clamp_min(sum(rate(warden_telegram_requests_total[5m])), 0.001)",
+          "legendFormat": "error ratio"
+        },
+        {
+          "expr": "sum(rate(warden_telegram_429_total[5m]))",
+          "legendFormat": "429/s"
+        }
+      ],
+      "title": "Telegram errors and 429",
+      "type": "timeseries"
+    },
+    {
+      "datasource": null,
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
+      "id": 5,
+      "targets": [
+        {
+          "expr": "warden_deletions_pending",
+          "legendFormat": "pending"
+        },
+        {
+          "expr": "sum by (result) (rate(warden_deletions_finished_total[5m]))",
+          "legendFormat": "{{result}}/s"
+        }
+      ],
+      "title": "Deletion engine",
+      "type": "timeseries"
+    },
+    {
+      "datasource": null,
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 16
+      },
+      "id": 6,
+      "targets": [
+        {
+          "expr": "warden_process_resident_memory_bytes",
+          "legendFormat": "RSS"
+        },
+        {
+          "expr": "warden_event_loop_lag_seconds",
+          "legendFormat": "event loop lag"
+        }
+      ],
+      "title": "Runtime",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": [
+    "warden",
+    "telegram"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timezone": "browser",
+  "title": "Warden",
+  "uid": "warden",
+  "version": 1
+}

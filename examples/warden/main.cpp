@@ -41,6 +41,7 @@
 #include "warden_util.hpp"
 #include "warden_views.hpp"
 
+#include <tgbot/metrics.hpp>
 #include <tgbot/tg_bot.hpp>
 
 #include <boost/asio/co_spawn.hpp>
@@ -149,6 +150,25 @@ net::awaitable<int> run(Config cfg) {
     }
 
     const auto executor = co_await net::this_coro::executor;
+    tgbot::metrics::setBuildInfo(kWardenVersion, cfg.instanceId);
+
+    // 事件循环延迟：每秒预期触发一次，实际触发晚了多少就是 lag。
+    net::co_spawn(
+        executor,
+        []() -> net::awaitable<void> {
+            auto expected = std::chrono::steady_clock::now();
+            while (!gShuttingDown.load()) {
+                expected += std::chrono::seconds{1};
+                co_await tgbot::co_sleep(std::chrono::milliseconds{1000});
+                const auto now = std::chrono::steady_clock::now();
+                const auto lag = std::chrono::duration<double>(now - expected).count();
+                tgbot::metrics::setEventLoopLag(std::max(0.0, lag));
+                if (expected < now) {
+                    expected = now;
+                }
+            }
+        },
+        net::detached);
 
     // 本地健康/控制端口：长轮询与 webhook 两种模式都能用，蓝绿发布脚本
     // 靠它判断新进程是否 ready、旧进程是否已经 drain。
