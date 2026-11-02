@@ -31,7 +31,7 @@ struct StreamOptions {
     // 单条消息的上限留点余量（Telegram 是 4096）
     std::size_t chunkLimit = 4000;
     // 流式过程中显示的"光标"；收尾时去掉
-    std::string cursor = "\xE2\x96\x8D";  // ▍
+    std::string cursor = "\xE2\x96\x8D"; // ▍
     // 收尾时用哪种 parse_mode。默认 kNone：
     // 只有在 append 的内容本身是已转义的 HTML 时才设 kHtml，
     // 否则未转义的 '<' 会让整条消息 400 can't parse entities
@@ -63,11 +63,11 @@ private:
     StreamOptions opts_;
     std::int64_t chatId_ = 0;
     std::int64_t messageId_ = 0;
-    std::string text_;   // 已收到的全部内容
-    std::string sent_;   // 最后一次成功发出去的内容（用于去重）
+    std::string text_; // 已收到的全部内容
+    std::string sent_; // 最后一次成功发出去的内容（用于去重）
     std::size_t sentChars_ = 0;
-    bool frozen_ = false;  // 超过单条上限，后续只累积不再编辑
+    bool frozen_ = false; // 超过单条上限，后续只累积不再编辑
     std::chrono::steady_clock::time_point lastEdit_{};
 };
 
-}  // namespace tgbot
+} // namespace tgbot

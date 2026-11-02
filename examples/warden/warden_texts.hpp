@@ -63,5 +63,4 @@ inline std::string helpText(std::string_view botUsername) {
     return s;
 }
 
-
-}
+} // namespace warden

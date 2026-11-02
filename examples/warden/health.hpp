@@ -23,19 +23,21 @@ namespace warden {
 
 class HealthServer : public std::enable_shared_from_this<HealthServer> {
 public:
-    HealthServer(Store& store, std::atomic<bool>& draining,
-                 std::string instanceId, std::string version,
+    HealthServer(Store& store,
+                 std::atomic<bool>& draining,
+                 std::string instanceId,
+                 std::string version,
                  std::string controlToken);
 
     // bind/listen 失败直接抛：健康端口被占不应该静默降级
     void start(const boost::asio::any_io_executor& executor,
-               const std::string& host, unsigned short port);
+               const std::string& host,
+               unsigned short port);
 
 private:
     boost::asio::awaitable<void> acceptLoop(
         std::shared_ptr<boost::asio::ip::tcp::acceptor> acceptor);
-    boost::asio::awaitable<void> session(
-        boost::asio::ip::tcp::socket socket);
+    boost::asio::awaitable<void> session(boost::asio::ip::tcp::socket socket);
 
     Store& store_;
     std::atomic<bool>& draining_;
@@ -45,4 +47,4 @@ private:
     std::chrono::steady_clock::time_point startedAt_;
 };
 
-}  // namespace warden
+} // namespace warden

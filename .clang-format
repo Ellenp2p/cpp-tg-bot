@@ -1,0 +1,29 @@
+---
+Language: Cpp
+BasedOnStyle: Google
+Standard: c++20
+
+# 统一为 4 空格、100 列，和现有 tgbot/Warden 代码保持一致。
+IndentWidth: 4
+ContinuationIndentWidth: 4
+TabWidth: 4
+ColumnLimit: 100
+AccessModifierOffset: -4
+NamespaceIndentation: None
+
+BreakBeforeBraces: Attach
+DerivePointerAlignment: false
+PointerAlignment: Left
+
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortCaseLabelsOnASingleLine: false
+
+BinPackArguments: false
+BinPackParameters: false
+
+SortIncludes: CaseSensitive
+IncludeBlocks: Preserve
+ReflowComments: true
+SpacesBeforeTrailingComments: 1

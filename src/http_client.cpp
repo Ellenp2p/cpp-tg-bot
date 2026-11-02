@@ -62,8 +62,7 @@ constexpr auto kWriteTimeout = std::chrono::seconds{15};
 fs::path executableDirectory() {
 #if defined(_WIN32)
     wchar_t buf[32768];
-    const DWORD n =
-        ::GetModuleFileNameW(nullptr, buf, static_cast<DWORD>(std::size(buf)));
+    const DWORD n = ::GetModuleFileNameW(nullptr, buf, static_cast<DWORD>(std::size(buf)));
     if (n > 0 && n < std::size(buf)) {
         return fs::path{buf}.parent_path();
     }
@@ -90,8 +89,7 @@ fs::path executableDirectory() {
 // 依次尝试：SSL_CERT_FILE → exe 同目录 → 工作目录 → 构建期路径
 std::vector<fs::path> caBundleCandidates() {
     std::vector<fs::path> candidates;
-    if (const char* env = std::getenv("SSL_CERT_FILE");
-        env != nullptr && *env != '\0') {
+    if (const char* env = std::getenv("SSL_CERT_FILE"); env != nullptr && *env != '\0') {
         candidates.emplace_back(env);
     }
     if (const auto dir = executableDirectory(); !dir.empty()) {
@@ -102,7 +100,7 @@ std::vector<fs::path> caBundleCandidates() {
         candidates.push_back(cwd / "cacert.pem");
     }
 #ifdef TB_CACERT_PEM
-    candidates.emplace_back(TB_CACERT_PEM);  // 构建目录（本地开发时直接用）
+    candidates.emplace_back(TB_CACERT_PEM); // 构建目录（本地开发时直接用）
 #endif
     return candidates;
 }
@@ -112,8 +110,8 @@ std::vector<fs::path> caBundleCandidates() {
 ssl::context& tlsContext() {
     static ssl::context ctx = [] {
         ssl::context c(ssl::context::tls_client);
-        c.set_options(ssl::context::default_workarounds |
-                      ssl::context::no_sslv2 | ssl::context::no_sslv3);
+        c.set_options(ssl::context::default_workarounds | ssl::context::no_sslv2 |
+                      ssl::context::no_sslv3);
         c.set_verify_mode(ssl::verify_peer);
 
         // 系统 CA 库（Linux/macOS 通常可用；Windows 上一般拿不到东西）
@@ -128,13 +126,12 @@ ssl::context& tlsContext() {
             }
             try {
                 c.load_verify_file(path.string());
-                spdlog::info("TLS CA bundle: {} (system CA: {})", path.string(),
-                             loaded ? "yes" : "no");
+                spdlog::info(
+                    "TLS CA bundle: {} (system CA: {})", path.string(), loaded ? "yes" : "no");
                 loaded = true;
                 break;
             } catch (const std::exception& e) {
-                spdlog::warn("load CA bundle '{}' failed: {}", path.string(),
-                             e.what());
+                spdlog::warn("load CA bundle '{}' failed: {}", path.string(), e.what());
             }
         }
         if (!loaded) {
@@ -151,10 +148,9 @@ ssl::context& tlsContext() {
 // 完成"的截止时间，黑洞连接不会再让请求无限挂起。
 struct Connection {
     ssl::stream<beast::tcp_stream> stream;
-    beast::flat_buffer buffer;  // 读缓冲必须随连接复用，不能丢
+    beast::flat_buffer buffer; // 读缓冲必须随连接复用，不能丢
 
-    explicit Connection(const net::any_io_executor& ex)
-        : stream(ex, tlsContext()) {}
+    explicit Connection(const net::any_io_executor& ex) : stream(ex, tlsContext()) {}
     ~Connection() {
         boost::system::error_code ec;
         stream.next_layer().socket().close(ec);
@@ -163,7 +159,7 @@ struct Connection {
     Connection& operator=(const Connection&) = delete;
 };
 
-constexpr std::size_t kMaxIdlePerHost = 8;  // 每个 host 的空闲连接上限
+constexpr std::size_t kMaxIdlePerHost = 8; // 每个 host 的空闲连接上限
 
 // 按 host 分组的空闲连接池：不同 host 之间绝不共用连接——连接上绑定了
 // 建连时的 host_name_verification 回调，混用等于给别的 host 开了后门。
@@ -190,24 +186,20 @@ net::awaitable<AcquiredConnection> acquire(const std::string& host) {
     conn->stream.set_verify_callback(ssl::host_name_verification(host));
 
     net::ip::tcp::resolver resolver(executor);
-    const auto endpoints =
-        co_await resolver.async_resolve(host, "https", net::use_awaitable);
+    const auto endpoints = co_await resolver.async_resolve(host, "https", net::use_awaitable);
 
     // 连接与握手都设截止时间：DNS 之后的 TCP 黑洞是最常见的"假死"来源
     conn->stream.next_layer().expires_after(kConnectTimeout);
-    co_await conn->stream.next_layer().async_connect(endpoints,
-                                                     net::use_awaitable);
+    co_await conn->stream.next_layer().async_connect(endpoints, net::use_awaitable);
 
     conn->stream.next_layer().expires_after(kHandshakeTimeout);
-    co_await conn->stream.async_handshake(ssl::stream_base::client,
-                                          net::use_awaitable);
+    co_await conn->stream.async_handshake(ssl::stream_base::client, net::use_awaitable);
     co_return AcquiredConnection{std::move(conn), false};
 }
 
-void release(std::unique_ptr<Connection> conn, const std::string& host,
-             bool reusable) {
+void release(std::unique_ptr<Connection> conn, const std::string& host, bool reusable) {
     if (!conn || !reusable) {
-        return;  // unique_ptr 析构自动 close
+        return; // unique_ptr 析构自动 close
     }
     auto& bucket = idlePool()[host];
     if (bucket.size() < kMaxIdlePerHost) {
@@ -221,8 +213,7 @@ void release(std::unique_ptr<Connection> conn, const std::string& host,
 net::awaitable<HttpResponse> doRequest(Connection& conn,
                                        const std::string& host,
                                        const HttpRequest& r) {
-    const auto verb =
-        r.method == HttpMethod::kPost ? http::verb::post : http::verb::get;
+    const auto verb = r.method == HttpMethod::kPost ? http::verb::post : http::verb::get;
     http::request<http::string_body> req{verb, r.target, 11};
     req.set(http::field::host, host);
     req.set(http::field::user_agent, "cpp-tg-bot/0.3");
@@ -238,26 +229,25 @@ net::awaitable<HttpResponse> doRequest(Connection& conn,
 
     http::response<http::string_body> res;
     conn.stream.next_layer().expires_after(r.readTimeout);
-    co_await http::async_read(conn.stream, conn.buffer, res,
-                              net::use_awaitable);
+    co_await http::async_read(conn.stream, conn.buffer, res, net::use_awaitable);
 
-    co_return HttpResponse{static_cast<int>(res.result_int()),
-                           std::move(res.body()), res.keep_alive()};
+    co_return HttpResponse{
+        static_cast<int>(res.result_int()), std::move(res.body()), res.keep_alive()};
 }
 
 bool isStaleConnectionCode(const boost::system::error_code& code) {
     return code == net::error::eof || code == http::error::end_of_stream ||
-           code == http::error::partial_message ||
-           code == net::error::connection_reset ||
+           code == http::error::partial_message || code == net::error::connection_reset ||
            code == net::error::broken_pipe;
 }
 
-}  // namespace
+} // namespace
 
-void clearIdlePool() { idlePool().clear(); }
+void clearIdlePool() {
+    idlePool().clear();
+}
 
-net::awaitable<HttpResponse> httpsRequest(const std::string& host,
-                                          const HttpRequest& request) {
+net::awaitable<HttpResponse> httpsRequest(const std::string& host, const HttpRequest& request) {
     // 最多两次尝试：池化连接可能被服务端在空闲期静默断开（重用前无法感知），
     // 遇到这类错误就丢弃连接、换新重试一次。
     for (int attempt = 0; attempt < 2; ++attempt) {
@@ -272,7 +262,7 @@ net::awaitable<HttpResponse> httpsRequest(const std::string& host,
             // 不是 beast::system_error（后者只是它的派生类），捕窄了会漏。
             const auto code = e.code();
             if (isStaleConnectionCode(code)) {
-                continue;  // conn 析构 → 关闭，下一轮换新连接
+                continue; // conn 析构 → 关闭，下一轮换新连接
             }
             // 读/写超时：只有"复用来的旧连接"值得换新重试；
             // 新建连接就超时说明对端真的不响应，应当上抛
@@ -282,16 +272,14 @@ net::awaitable<HttpResponse> httpsRequest(const std::string& host,
             throw;
         }
     }
-    throw std::runtime_error(
-        "httpsRequest: 复用连接失效后换新连接仍然失败（服务端不可达？）");
+    throw std::runtime_error("httpsRequest: 复用连接失效后换新连接仍然失败（服务端不可达？）");
 }
 
-net::awaitable<HttpResponse> httpsGet(const std::string& host,
-                                      const std::string& target) {
+net::awaitable<HttpResponse> httpsGet(const std::string& host, const std::string& target) {
     HttpRequest req;
     req.method = HttpMethod::kGet;
     req.target = target;
     co_return co_await httpsRequest(host, req);
 }
 
-}  // namespace tgbot
+} // namespace tgbot

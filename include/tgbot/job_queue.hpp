@@ -17,10 +17,9 @@ namespace tgbot {
 // key 是幂等键：同一个 key 重复入队会被忽略（重试、重启都不会重复执行）。
 struct Job {
     std::string key;
-    std::string kind;   // 业务类型，worker 自己按 kind 分发
-    std::string payload;  // 建议放 JSON
-    std::chrono::system_clock::time_point runAt =
-        std::chrono::system_clock::now();
+    std::string kind;    // 业务类型，worker 自己按 kind 分发
+    std::string payload; // 建议放 JSON
+    std::chrono::system_clock::time_point runAt = std::chrono::system_clock::now();
     int maxAttempts = 8;
 };
 
@@ -40,8 +39,7 @@ struct JobRecord {
 // 假定单消费者（本项目的 io_context 是单线程的），不做多进程抢占。
 class JobQueue {
 public:
-    using Handler =
-        std::function<boost::asio::awaitable<void>(const JobRecord&)>;
+    using Handler = std::function<boost::asio::awaitable<void>(const JobRecord&)>;
 
     // path 传 ":memory:" 可用于测试
     explicit JobQueue(std::string path);
@@ -67,13 +65,11 @@ public:
 
     // 工作循环：handler 抛异常即视为失败并重试
     boost::asio::awaitable<void> runWorker(
-        Handler handler,
-        std::chrono::milliseconds pollInterval =
-            std::chrono::milliseconds{500});
+        Handler handler, std::chrono::milliseconds pollInterval = std::chrono::milliseconds{500});
 
 private:
     void exec(const char* sql) const;
     sqlite3* db_ = nullptr;
 };
 
-}  // namespace tgbot
+} // namespace tgbot

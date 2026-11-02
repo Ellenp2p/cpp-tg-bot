@@ -46,4 +46,4 @@ bool ChainMonitor::shouldProbe(std::chrono::steady_clock::time_point now) const 
     return now - lastProbe_ >= options_.pausedProbe;
 }
 
-}  // namespace tgbot
+} // namespace tgbot

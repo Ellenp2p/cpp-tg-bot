@@ -38,8 +38,7 @@ private:
 };
 
 // Telegram：逐个 owner 私聊（受 BotClient 发送限速约束）
-AlertSink makeOwnerDmSink(tgbot::BotClient& bot,
-                          std::vector<std::int64_t> owners);
+AlertSink makeOwnerDmSink(tgbot::BotClient& bot, std::vector<std::int64_t> owners);
 
 // 飞书自定义机器人 webhook。secret 非空时按飞书签名规范带 timestamp/sign。
 AlertSink makeFeishuSink(std::string webhookUrl, std::string secret);
@@ -47,4 +46,4 @@ AlertSink makeFeishuSink(std::string webhookUrl, std::string secret);
 // Discord webhook。只发 content 文本，超长会自动截断到 1900 字符。
 AlertSink makeDiscordSink(std::string webhookUrl);
 
-}  // namespace warden
+} // namespace warden

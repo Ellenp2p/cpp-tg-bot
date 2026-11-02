@@ -1,5 +1,4 @@
 #pragma once
-#include "warden_types.hpp"
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <cctype>
@@ -10,6 +9,7 @@
 #include <string_view>
 #include <utility>
 #include <vector>
+#include "warden_types.hpp"
 namespace warden {
 inline std::int64_t nowSec() {
     return std::chrono::duration_cast<std::chrono::seconds>(
@@ -64,8 +64,7 @@ inline std::string displayName(const json& user) {
     if (name.empty()) {
         name = user.value("username", std::string{});
     }
-    return name.empty() ? std::to_string(user.value("id", std::int64_t{0}))
-                        : name;
+    return name.empty() ? std::to_string(user.value("id", std::int64_t{0})) : name;
 }
 
 // 命令行参数：去掉命令本身和 @Bot 后缀后的剩余文本
@@ -84,8 +83,7 @@ std::pair<std::string, std::string> splitFirst(std::string_view s) {
     if (space == std::string_view::npos) {
         return {std::string{s}, std::string{}};
     }
-    return {std::string{s.substr(0, space)},
-            trim(s.substr(space + 1))};
+    return {std::string{s.substr(0, space)}, trim(s.substr(space + 1))};
 }
 
 // UTF-8 安全截断（按钮标题用）
@@ -120,16 +118,18 @@ inline bool isAdminStatus(std::string_view status) {
     return status == "creator" || status == "administrator";
 }
 
-inline std::string boolMark(bool ok) { return ok ? "✅" : "❌"; }
+inline std::string boolMark(bool ok) {
+    return ok ? "✅" : "❌";
+}
 
-net::awaitable<std::optional<std::string>> fetchMemberStatus(
-    BotClient& bot, std::int64_t chatId, std::int64_t userId) {
+net::awaitable<std::optional<std::string>> fetchMemberStatus(BotClient& bot,
+                                                             std::int64_t chatId,
+                                                             std::int64_t userId) {
     try {
         const auto member = co_await bot.getChatMember(chatId, userId);
         co_return member.value("status", std::string{});
     } catch (const std::exception& e) {
-        spdlog::warn("getChatMember failed: chat={} user={}: {}", chatId, userId,
-                     e.what());
+        spdlog::warn("getChatMember failed: chat={} user={}: {}", chatId, userId, e.what());
         co_return std::nullopt;
     }
 }
@@ -138,8 +138,7 @@ net::awaitable<std::optional<std::string>> fetchMemberStatus(
 // 管理员 / 客户端不支持）时，降级成群内普通回复，并在 reply TTL 后删除；
 // 普通回复也发不出去时，再尝试私聊发送者（同样按 TTL 删除）。
 
-inline bool isOwnerId(const std::vector<std::int64_t>& owners,
-               std::int64_t userId) {
+inline bool isOwnerId(const std::vector<std::int64_t>& owners, std::int64_t userId) {
     return std::find(owners.begin(), owners.end(), userId) != owners.end();
 }
 
@@ -151,8 +150,7 @@ inline std::string commandNameFromMessage(const json& msg) {
         return {};
     }
     const auto end = text.find(' ');
-    return text.substr(1, end == std::string::npos ? std::string::npos
-                                                   : end - 1);
+    return text.substr(1, end == std::string::npos ? std::string::npos : end - 1);
 }
 
 inline bool commandWasMentioned(const json& msg) {
@@ -161,8 +159,7 @@ inline bool commandWasMentioned(const json& msg) {
 
 // 未注册命令是否明确写给了本 bot：/foo@OurBot。没有 @ 的 /foo 不动，
 // /foo@OtherBot 也不动，避免误删别的 bot 的命令。
-inline bool isCommandAddressedToBot(const json& msg,
-                                    std::string_view botUsername) {
+inline bool isCommandAddressedToBot(const json& msg, std::string_view botUsername) {
     if (botUsername.empty()) {
         return false;
     }
@@ -172,17 +169,14 @@ inline bool isCommandAddressedToBot(const json& msg,
     }
     const auto end = text.find(' ');
     const auto token =
-        std::string_view{text}.substr(1, end == std::string::npos
-                                            ? std::string::npos
-                                            : end - 1);
+        std::string_view{text}.substr(1, end == std::string::npos ? std::string::npos : end - 1);
     const auto at = token.find('@');
     if (at == std::string_view::npos || at + 1 >= token.size()) {
         return false;
     }
-    return lower(std::string{token.substr(at + 1)}) ==
-           lower(std::string{botUsername});
+    return lower(std::string{token.substr(at + 1)}) == lower(std::string{botUsername});
 }
 
 // 命令总守卫：所有“私聊/群、管理员/owner、群里拒绝后是忽略还是提示”
 
-}
+} // namespace warden

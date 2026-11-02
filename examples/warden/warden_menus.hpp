@@ -1,8 +1,8 @@
 #pragma once
-#include "warden_types.hpp"
-#include "commands.hpp"
 #include <unordered_set>
+#include "commands.hpp"
 #include "store.hpp"
+#include "warden_types.hpp"
 namespace warden {
 inline std::vector<tgbot::BotCommand> groupAdminCommands() {
     // 群菜单完全由 commands.hpp 的 groupMenu/ephemeralCommand 决定
@@ -22,8 +22,7 @@ inline std::vector<tgbot::BotCommand> privateCommands() {
     std::vector<tgbot::BotCommand> out;
     for (const auto& policy : kCommandPolicies) {
         if (policy.privateMenu) {
-            out.push_back({std::string{policy.name},
-                           std::string{policy.description}, false});
+            out.push_back({std::string{policy.name}, std::string{policy.description}, false});
         }
     }
     return out;
@@ -34,8 +33,7 @@ inline std::vector<tgbot::BotCommand> privateCommands() {
 // 每个群一次 setMyCommands，进程内去重，失败下次再试。
 class GroupMenuPublisher {
 public:
-    explicit GroupMenuPublisher(std::vector<tgbot::BotCommand> commands,
-                                bool enabled = true)
+    explicit GroupMenuPublisher(std::vector<tgbot::BotCommand> commands, bool enabled = true)
         : commands_(std::move(commands)), enabled_(enabled) {}
 
     bool enabled() const { return enabled_; }
@@ -48,19 +46,17 @@ public:
             co_return;
         }
         if (done_.size() > 20000) {
-            done_.clear();  // 极端多群时允许重发，换取有界内存
+            done_.clear(); // 极端多群时允许重发，换取有界内存
         }
         done_.insert(chatId);
-        const json scope = {{"type", "chat_administrators"},
-                            {"chat_id", chatId}};
+        const json scope = {{"type", "chat_administrators"}, {"chat_id", chatId}};
         try {
             co_await bot.setMyCommands(commands_, scope);
             spdlog::debug("group admin menu published: chat={}", chatId);
         } catch (const std::exception& e) {
             // 机器人不是管理员 / 网络问题：不标记完成，下次命令或下次启动再试
             done_.erase(chatId);
-            spdlog::debug("publish group admin menu failed: chat={}: {}", chatId,
-                          e.what());
+            spdlog::debug("publish group admin menu failed: chat={}: {}", chatId, e.what());
         }
     }
 
@@ -72,11 +68,13 @@ private:
 
 // 启动时给已知的、机器人是管理员的群补发菜单。串行 + 100ms 间隔，
 // 避免几百个群同时打 setMyCommands 触发限速。
-inline net::awaitable<void> publishAllGroupMenus(BotClient& bot, Store& store,
-                                          GroupMenuPublisher& menus) {
+inline net::awaitable<void> publishAllGroupMenus(BotClient& bot,
+                                                 Store& store,
+                                                 GroupMenuPublisher& menus) {
     if (!menus.enabled()) {
-        spdlog::info("group admin command menus disabled "
-                     "(WARDEN_GROUP_MENUS=false)");
+        spdlog::info(
+            "group admin command menus disabled "
+            "(WARDEN_GROUP_MENUS=false)");
         co_return;
     }
     constexpr int kPage = 200;
@@ -99,5 +97,4 @@ inline net::awaitable<void> publishAllGroupMenus(BotClient& bot, Store& store,
     spdlog::info("group admin command menus published");
 }
 
-
-}
+} // namespace warden

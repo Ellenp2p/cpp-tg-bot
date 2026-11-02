@@ -25,8 +25,8 @@ struct GrabResult {
     std::uint64_t seq = 0;
     std::int64_t userId = 0;
     bool ok = false;
-    std::string detail;  // 成功时是金额，失败时是原因
-    bool fromNetwork = false;  // 仅供测试观察并发
+    std::string detail;       // 成功时是金额，失败时是原因
+    bool fromNetwork = false; // 仅供测试观察并发
 };
 
 // 抢红包队列：容量 = 剩余份数，先进先出，超员直接拒绝。
@@ -37,10 +37,10 @@ struct GrabResult {
 class GrabQueue {
 public:
     enum class Accept {
-        kAccepted,   // 入队成功
-        kDuplicate,  // 这个人已经在队列里了
-        kFull,       // 名额满了（杜绝"抢不到还要花钱"的请求）
-        kClosed,     // 红包已完结
+        kAccepted,  // 入队成功
+        kDuplicate, // 这个人已经在队列里了
+        kFull,      // 名额满了（杜绝"抢不到还要花钱"的请求）
+        kClosed,    // 红包已完结
     };
 
     explicit GrabQueue(std::size_t capacity);
@@ -67,7 +67,7 @@ private:
     std::uint64_t nextSeq_ = 1;
     bool closed_ = false;
     std::deque<GrabRequest> queue_;
-    std::map<std::int64_t, std::uint64_t> byUser_;  // userId -> seq
+    std::map<std::int64_t, std::uint64_t> byUser_; // userId -> seq
 };
 
 // 批量执行器：拉一批请求并发提交，但结果严格按 seq 顺序交给渲染回调。
@@ -77,14 +77,13 @@ private:
 class GrabRunner {
 public:
     struct Options {
-        std::size_t maxInFlight = 5;                // 同时最多几笔在飞
-        std::chrono::milliseconds poll{2};          // 等待完成状态的轮询间隔
-        std::chrono::seconds batchTimeout{120};     // 单批最长等待
+        std::size_t maxInFlight = 5;            // 同时最多几笔在飞
+        std::chrono::milliseconds poll{2};      // 等待完成状态的轮询间隔
+        std::chrono::seconds batchTimeout{120}; // 单批最长等待
     };
 
     using Submit = std::function<boost::asio::awaitable<GrabResult>(GrabRequest)>;
-    using Render =
-        std::function<boost::asio::awaitable<void>(std::vector<GrabResult>)>;
+    using Render = std::function<boost::asio::awaitable<void>(std::vector<GrabResult>)>;
 
     // 注意：不能写 Options options = {}（GCC/clang 不允许嵌套类型的默认成员
     // 初始化器作默认实参），所以拆成两个重载
@@ -93,11 +92,10 @@ public:
 
     // 把队列里已接收的请求全部处理掉，按 seq 顺序分批渲染。
     // 返回处理条数。
-    boost::asio::awaitable<std::size_t> drain(GrabQueue& queue, Submit submit,
-                                              Render render);
+    boost::asio::awaitable<std::size_t> drain(GrabQueue& queue, Submit submit, Render render);
 
 private:
     Options options_;
 };
 
-}  // namespace tgbot
+} // namespace tgbot

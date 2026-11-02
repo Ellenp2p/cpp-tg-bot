@@ -24,7 +24,7 @@ GrabQueue::Accept GrabQueue::submit(std::int64_t userId, std::string userName) {
         return Accept::kDuplicate;
     }
     if (accepted_ >= capacity_) {
-        return Accept::kFull;  // 没名额了：当场拒绝，不让他白花手续费
+        return Accept::kFull; // 没名额了：当场拒绝，不让他白花手续费
     }
 
     GrabRequest request;
@@ -47,9 +47,13 @@ std::optional<GrabRequest> GrabQueue::pop() {
     return request;
 }
 
-void GrabQueue::close() { closed_ = true; }
+void GrabQueue::close() {
+    closed_ = true;
+}
 
-void GrabQueue::resetClosed() { closed_ = false; }
+void GrabQueue::resetClosed() {
+    closed_ = false;
+}
 
 GrabRunner::GrabRunner() : GrabRunner(Options{}) {}
 
@@ -113,10 +117,8 @@ boost::asio::awaitable<std::size_t> GrabRunner::drain(GrabQueue& queue,
         }
 
         // 3) 等这一批结束（单批超时就当作失败，继续往下走）
-        const auto deadline =
-            std::chrono::steady_clock::now() + options_.batchTimeout;
-        while (state->pending > 0 &&
-               std::chrono::steady_clock::now() < deadline) {
+        const auto deadline = std::chrono::steady_clock::now() + options_.batchTimeout;
+        while (state->pending > 0 && std::chrono::steady_clock::now() < deadline) {
             co_await co_sleep(options_.poll);
         }
 
@@ -144,4 +146,4 @@ boost::asio::awaitable<std::size_t> GrabRunner::drain(GrabQueue& queue,
     co_return processed;
 }
 
-}  // namespace tgbot
+} // namespace tgbot

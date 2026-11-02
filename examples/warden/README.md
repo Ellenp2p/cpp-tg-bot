@@ -340,10 +340,9 @@ TG_WEBHOOK_SECRET=随机串 WEBHOOK_HOST=127.0.0.1 WEBHOOK_PORT=8080 \
 - 单实例：同一个 token 不能同时跑长轮询和 webhook；SQLite 也不适合多进程
   共享。高负载靠单进程异步 + 限流，不靠多开。
 
-> **零停机热更新**：生产建议 webhook + 稳定反向代理 + 蓝绿两槽，旧进程收到
-> SIGTERM 后 drain 再退出。完整时序、代理配置、无代理的双端口方案和长轮询
-> 降级方案见 [HOT_UPDATE.md](HOT_UPDATE.md)。当前版本还缺 `/healthz`、
-> 优雅 drain 和删除任务租约（P0/P1），需要下一步实现。
+> **部署**：生产建议 webhook + 稳定反向代理 + 蓝绿两槽，旧进程收到 SIGTERM
+> 后 drain 再退出。代码侧已提供 `/healthz`、`/readyz`、`POST /drain`；
+> 蓝绿切换本身仍需外部脚本或反向代理配合。长轮询只能做到近零停机。
 
 ## 6. 高负载：现在做了什么、还差什么
 
@@ -619,9 +618,9 @@ curl -X POST -H "X-Warden-Token: $TOKEN" http://127.0.0.1:9090/drain
 # 进程退出后，仍然需要 systemctl start / 手动启动新二进制
 ```
 
-**当前没有零停机**：stop 到 start 之间有几秒空窗；Telegram 会重试/排队，
-已落库的删除任务不会丢。要真正零停机，需要 P1 租约 + 反向代理 + 蓝绿脚本，
-见 [HOT_UPDATE.md](HOT_UPDATE.md)。
+**当前没有内置零停机**：stop 到 start 之间有几秒空窗；Telegram 会重试/排队，
+已落库的删除任务不会丢。代码侧已有 drain；要真正零停机，需要反向代理 +
+蓝绿脚本配合。
 
 ### 可以先不做的
 
@@ -634,6 +633,6 @@ curl -X POST -H "X-Warden-Token: $TOKEN" http://127.0.0.1:9090/drain
 - **第一次上线用长轮询**，变量最少；确认功能后再切 webhook + 反向代理。
 - 单实例 + SQLite，先小群灰度；不要一开始就上几百个活跃群。
 - 更新二进制目前会有秒级中断（SIGTERM 立即停）；能接受就手动 `systemctl restart`，
-  不能接受就先做 P0/P1，再按 [HOT_UPDATE.md](HOT_UPDATE.md) 做蓝绿。
+  不能接受就上反向代理 + 蓝绿槽，并先用 `/drain` 排空旧进程。
 
 

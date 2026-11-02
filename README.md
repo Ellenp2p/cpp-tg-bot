@@ -190,9 +190,8 @@ export TG_BOT_TOKEN=<你的token> && ./build/group_admin
 TG_BOT_TOKEN=<token> WARDEN_OWNERS=<你的用户ID> ./build/Release/warden
 ```
 
-完整命令、环境变量、架构与已知限制见
-[examples/warden/README.md](examples/warden/README.md)；零停机热更新设计见
-[examples/warden/HOT_UPDATE.md](examples/warden/HOT_UPDATE.md)。
+完整命令、环境变量、架构、部署与已知限制见
+[examples/warden/README.md](examples/warden/README.md)。
 
 ## 富文本与流式输出
 

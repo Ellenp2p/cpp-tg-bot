@@ -11,9 +11,9 @@ namespace tgbot {
 // 经验：程序拼接的内容优先用 kHtml（只需转义 & < >）；
 // kMarkdownV2 有 18 个元字符必须转义，漏一个整条消息就 400。
 enum class ParseMode {
-    kNone,        // 纯文本，不解析
-    kHtml,        // <b> <i> <u> <s> <code> <pre> <a href> <blockquote> ...
-    kMarkdownV2,  // *bold* _italic_ __underline__ ~strike~ ||spoiler|| `code`
+    kNone,       // 纯文本，不解析
+    kHtml,       // <b> <i> <u> <s> <code> <pre> <a href> <blockquote> ...
+    kMarkdownV2, // *bold* _italic_ __underline__ ~strike~ ||spoiler|| `code`
 };
 
 // kNone 返回 nullptr（调用方据此决定是否传 parse_mode 参数）
@@ -34,4 +34,4 @@ std::vector<std::string> splitMessage(std::string_view text,
                                       std::size_t limit = 4096,
                                       ParseMode mode = ParseMode::kNone);
 
-}  // namespace tgbot
+} // namespace tgbot

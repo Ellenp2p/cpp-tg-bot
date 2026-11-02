@@ -39,14 +39,12 @@ public:
     friend bool operator<(const Amount& a, const Amount& b) {
         return a.hi_ < b.hi_ || (a.hi_ == b.hi_ && a.lo_ < b.lo_);
     }
-    friend bool operator<=(const Amount& a, const Amount& b) {
-        return !(b < a);
-    }
+    friend bool operator<=(const Amount& a, const Amount& b) { return !(b < a); }
     friend bool operator>(const Amount& a, const Amount& b) { return b < a; }
 
-    friend Amount operator+(const Amount& a, const Amount& b);  // 溢出抛
-    friend Amount operator-(const Amount& a, const Amount& b);  // 下溢抛
-    Amount mulSmall(std::uint64_t factor) const;                // 溢出抛
+    friend Amount operator+(const Amount& a, const Amount& b); // 溢出抛
+    friend Amount operator-(const Amount& a, const Amount& b); // 下溢抛
+    Amount mulSmall(std::uint64_t factor) const;               // 溢出抛
     // 除以小整数：返回 (商, 余数)
     std::pair<Amount, std::uint64_t> divmod(std::uint64_t divisor) const;
     // 取 [lo, hi] 区间内的随机值（用于红包拆分），保证每次都有界
@@ -61,4 +59,4 @@ private:
     std::uint64_t lo_ = 0;
 };
 
-}  // namespace tgbot
+} // namespace tgbot

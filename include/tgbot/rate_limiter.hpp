@@ -32,11 +32,11 @@ public:
     }
 
 private:
-    static constexpr auto kGlobalInterval = std::chrono::milliseconds{34};  // ~30/s
+    static constexpr auto kGlobalInterval = std::chrono::milliseconds{34}; // ~30/s
     static constexpr auto kChatInterval = std::chrono::seconds{1};
 
     std::chrono::steady_clock::time_point nextGlobalSend_{};
     std::map<std::int64_t, std::chrono::steady_clock::time_point> nextChatSend_;
 };
 
-}  // namespace tgbot
+} // namespace tgbot

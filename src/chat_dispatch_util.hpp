@@ -70,16 +70,14 @@ inline std::int64_t chatIdOf(const nlohmann::json& update) {
 class UpdateWorkers {
 public:
     explicit UpdateWorkers(boost::asio::any_io_executor executor,
-                         std::size_t maxPending = 2000,
-                         int workers = 8)
+                           std::size_t maxPending = 2000,
+                           int workers = 8)
         : state_(std::make_shared<State>(std::move(executor), maxPending)) {
         const auto count = std::max(1, workers);
         for (int i = 0; i < count; ++i) {
             boost::asio::co_spawn(
                 state_->executor,
-                [state = state_]() -> boost::asio::awaitable<void> {
-                    co_await workerLoop(state);
-                },
+                [state = state_]() -> boost::asio::awaitable<void> { co_await workerLoop(state); },
                 boost::asio::detached);
         }
     }
@@ -93,8 +91,7 @@ public:
     UpdateWorkers& operator=(const UpdateWorkers&) = delete;
 
     // 返回 false = 队列已满，调用方必须背压（webhook 503 / 长轮询暂停）。
-    bool dispatch(const nlohmann::json& update, BotClient& bot,
-                  Dispatcher& dispatcher) {
+    bool dispatch(const nlohmann::json& update, BotClient& bot, Dispatcher& dispatcher) {
         if (!state_->accepting || state_->pending >= state_->maxPending) {
             return false;
         }
@@ -138,11 +135,9 @@ private:
         bool accepting = true;
     };
 
-    static boost::asio::awaitable<void> workerLoop(
-        std::shared_ptr<State> state) {
+    static boost::asio::awaitable<void> workerLoop(std::shared_ptr<State> state) {
         for (;;) {
-            if (!state->accepting && state->pending == 0 &&
-                state->ready.empty()) {
+            if (!state->accepting && state->pending == 0 && state->ready.empty()) {
                 co_return;
             }
             if (state->ready.empty()) {
@@ -162,8 +157,7 @@ private:
             --state->pending;
 
             try {
-                co_await job.dispatcher->dispatch(std::move(job.update),
-                                                  *job.bot);
+                co_await job.dispatcher->dispatch(std::move(job.update), *job.bot);
             } catch (const std::exception& e) {
                 spdlog::error("update dispatch failed: {}", e.what());
             } catch (...) {
@@ -187,5 +181,5 @@ private:
     std::shared_ptr<State> state_;
 };
 
-}  // namespace detail
-}  // namespace tgbot
+} // namespace detail
+} // namespace tgbot

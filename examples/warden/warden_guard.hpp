@@ -1,19 +1,20 @@
 #pragma once
-#include "warden_types.hpp"
-#include "warden_util.hpp"
-#include "warden_menus.hpp"
-#include "replies.hpp"
-#include "commands.hpp"
-#include "store.hpp"
-#include "scheduler.hpp"
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
+#include "commands.hpp"
+#include "replies.hpp"
+#include "scheduler.hpp"
+#include "store.hpp"
+#include "warden_menus.hpp"
+#include "warden_types.hpp"
+#include "warden_util.hpp"
 namespace warden {
-inline net::awaitable<bool> groupCommandGuard(BotClient& bot, Store& store,
-                                       DeleteScheduler& sched,
-                                       const std::vector<std::int64_t>& owners,
-                                       GroupMenuPublisher& menus,
-                                       const json& msg) {
+inline net::awaitable<bool> groupCommandGuard(BotClient& bot,
+                                              Store& store,
+                                              DeleteScheduler& sched,
+                                              const std::vector<std::int64_t>& owners,
+                                              GroupMenuPublisher& menus,
+                                              const json& msg) {
     const auto type = chatTypeOf(msg);
     const auto name = commandNameFromMessage(msg);
     const auto* policy = findCommandPolicy(name);
@@ -43,7 +44,7 @@ inline net::awaitable<bool> groupCommandGuard(BotClient& bot, Store& store,
         co_return true;
     }
     if (!isGroupType(type)) {
-        co_return false;  // 频道等场景不提供命令
+        co_return false; // 频道等场景不提供命令
     }
 
     // 明确 @ 本 bot 的注册命令始终删；没写 @ 的看 deleteBareCommand。
@@ -58,8 +59,7 @@ inline net::awaitable<bool> groupCommandGuard(BotClient& bot, Store& store,
 
     if (!policy->groupAllowed) {
         if (policy->groupDeny == GroupDeny::kRedirect) {
-            co_await replyEphemeral(bot, sched, msg,
-                                    "请私聊我使用 /" + name);
+            co_await replyEphemeral(bot, sched, msg, "请私聊我使用 /" + name);
         }
         co_return false;
     }
@@ -70,12 +70,11 @@ inline net::awaitable<bool> groupCommandGuard(BotClient& bot, Store& store,
 
     // 拥有者是最高管理员：不查 getChatMember，直接放行并补登记群
     if (owner) {
-        store.ensureChat(chatId, type,
-                         msg.value("chat", json::object())
-                             .value("title", std::string{}),
+        store.ensureChat(chatId,
+                         type,
+                         msg.value("chat", json::object()).value("title", std::string{}),
                          nowSec());
-        spdlog::debug("owner override in group: chat={} user={}", chatId,
-                      userId);
+        spdlog::debug("owner override in group: chat={} user={}", chatId, userId);
         co_await menus.publish(bot, chatId);
         co_return true;
     }
@@ -87,25 +86,20 @@ inline net::awaitable<bool> groupCommandGuard(BotClient& bot, Store& store,
     const auto status = co_await fetchMemberStatus(bot, chatId, userId);
     if (!status.has_value()) {
         co_await replyEphemeral(
-            bot, sched, msg,
-            "查询你的群身份失败（网络或权限问题），请稍后重试。");
+            bot, sched, msg, "查询你的群身份失败（网络或权限问题），请稍后重试。");
         co_return false;
     }
     if (!isAdminStatus(*status)) {
-        spdlog::debug("denied group command from non-admin: chat={} user={}",
-                      chatId, userId);
+        spdlog::debug("denied group command from non-admin: chat={} user={}", chatId, userId);
         co_return false;
     }
 
-    store.addAdmin(chatId, userId, *status, displayName(msg.value("from", json::object())), nowSec());
-    store.ensureChat(chatId, type,
-                     msg.value("chat", json::object())
-                         .value("title", std::string{}),
-                     nowSec());
+    store.addAdmin(
+        chatId, userId, *status, displayName(msg.value("from", json::object())), nowSec());
+    store.ensureChat(
+        chatId, type, msg.value("chat", json::object()).value("title", std::string{}), nowSec());
     co_await menus.publish(bot, chatId);
     co_return true;
 }
 
-
-}
-
+} // namespace warden

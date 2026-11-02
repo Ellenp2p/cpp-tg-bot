@@ -1,10 +1,9 @@
 #pragma once
+#include "store.hpp"
 #include "warden_types.hpp"
 #include "warden_util.hpp"
-#include "store.hpp"
 namespace warden {
-inline ChatRecord recordFromChat(const json& chat, const json& member,
-                          std::int64_t now) {
+inline ChatRecord recordFromChat(const json& chat, const json& member, std::int64_t now) {
     ChatRecord r;
     r.chatId = chat.value("id", std::int64_t{0});
     r.type = chat.value("type", std::string{});
@@ -33,8 +32,7 @@ net::awaitable<std::optional<ChatRecord>> refreshChat(BotClient& bot,
         const auto member = co_await bot.getChatMember(chatId, botId);
         const auto now = nowSec();
         // getChat 会带当前置顶消息；顺手登记，重启后也能保护"历史置顶"
-        if (const auto pin = chat.find("pinned_message");
-            pin != chat.end() && pin->is_object()) {
+        if (const auto pin = chat.find("pinned_message"); pin != chat.end() && pin->is_object()) {
             const auto pinnedId = pin->value("message_id", std::int64_t{0});
             if (pinnedId != 0) {
                 store.markPinned(chatId, pinnedId, now);
@@ -53,8 +51,7 @@ net::awaitable<std::optional<ChatRecord>> refreshChat(BotClient& bot,
     }
 }
 
-inline net::awaitable<void> refreshAdmins(BotClient& bot, Store& store,
-                                   std::int64_t chatId) {
+inline net::awaitable<void> refreshAdmins(BotClient& bot, Store& store, std::int64_t chatId) {
     try {
         const auto list = co_await bot.getChatAdministrators(chatId);
         std::vector<AdminRow> rows;
@@ -63,18 +60,15 @@ inline net::awaitable<void> refreshAdmins(BotClient& bot, Store& store,
                 continue;
             }
             const auto user = m.value("user", json::object());
-            rows.push_back(AdminRow{
-                user.value("id", std::int64_t{0}),
-                m.value("status", std::string{}),
-                displayName(user)});
+            rows.push_back(AdminRow{user.value("id", std::int64_t{0}),
+                                    m.value("status", std::string{}),
+                                    displayName(user)});
         }
         store.replaceAdmins(chatId, rows, nowSec());
-        spdlog::info("admin roster refreshed: chat={} count={}", chatId,
-                     rows.size());
+        spdlog::info("admin roster refreshed: chat={} count={}", chatId, rows.size());
     } catch (const std::exception& e) {
         spdlog::warn("getChatAdministrators {} failed: {}", chatId, e.what());
     }
 }
 
-
-}
+} // namespace warden

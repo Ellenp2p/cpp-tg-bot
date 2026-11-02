@@ -31,7 +31,7 @@ bool isNotModified(std::string_view what) {
     return what.find("message is not modified") != std::string_view::npos;
 }
 
-}  // namespace
+} // namespace
 
 PanelManager::PanelManager(BotClient& bot) : bot_(bot) {}
 
@@ -52,8 +52,8 @@ boost::asio::awaitable<void> PanelManager::edit(std::int64_t chatId,
     }
 }
 
-boost::asio::awaitable<std::int64_t> PanelManager::open(
-    std::int64_t chatId, std::shared_ptr<Panel> panel) {
+boost::asio::awaitable<std::int64_t> PanelManager::open(std::int64_t chatId,
+                                                        std::shared_ptr<Panel> panel) {
     const auto view = panel->render();
     SendOptions send;
     send.parseMode = view.parseMode;
@@ -68,24 +68,24 @@ boost::asio::awaitable<std::int64_t> PanelManager::open(
     co_return messageId;
 }
 
-void PanelManager::attach(std::int64_t chatId, std::int64_t messageId,
+void PanelManager::attach(std::int64_t chatId,
+                          std::int64_t messageId,
                           std::shared_ptr<Panel> panel) {
     if (panel) {
         panels_[{chatId, messageId}] = std::move(panel);
     }
 }
 
-boost::asio::awaitable<void> PanelManager::refresh(std::int64_t chatId,
-                                                   std::int64_t messageId) {
+boost::asio::awaitable<void> PanelManager::refresh(std::int64_t chatId, std::int64_t messageId) {
     const auto it = panels_.find({chatId, messageId});
     if (it != panels_.end()) {
         co_await edit(chatId, messageId, *it->second);
     }
 }
 
-boost::asio::awaitable<void> PanelManager::applyEffects(
-    const PanelEffects& effects, std::int64_t chatId,
-    std::string_view callbackId) {
+boost::asio::awaitable<void> PanelManager::applyEffects(const PanelEffects& effects,
+                                                        std::int64_t chatId,
+                                                        std::string_view callbackId) {
     for (const auto& pm : effects.privateMessages) {
         EphemeralMessageParameters eph;
         eph.receiverUserId = pm.userId;
@@ -95,8 +95,7 @@ boost::asio::awaitable<void> PanelManager::applyEffects(
             eph.callbackQueryId = std::string{callbackId};
         }
         try {
-            co_await bot_.sendEphemeralMessage(chatId, eph, pm.text,
-                                               pm.keyboard);
+            co_await bot_.sendEphemeralMessage(chatId, eph, pm.text, pm.keyboard);
         } catch (const std::exception& e) {
             spdlog::warn("panel: 给 {} 发私密消息失败: {}", pm.userId, e.what());
         }
@@ -110,8 +109,7 @@ boost::asio::awaitable<void> PanelManager::applyEffects(
     }
 }
 
-boost::asio::awaitable<void> PanelManager::handleCallback(
-    nlohmann::json callbackQuery) {
+boost::asio::awaitable<void> PanelManager::handleCallback(nlohmann::json callbackQuery) {
     const auto cqId = callbackQuery.value("id", std::string{});
     const auto data = callbackQuery.value("data", std::string{});
 
@@ -157,8 +155,7 @@ boost::asio::awaitable<void> PanelManager::handleCallback(
     }
 }
 
-boost::asio::awaitable<void> PanelManager::runTicker(
-    std::chrono::milliseconds interval) {
+boost::asio::awaitable<void> PanelManager::runTicker(std::chrono::milliseconds interval) {
     while (true) {
         co_await co_sleep(interval);
 
@@ -186,4 +183,4 @@ boost::asio::awaitable<void> PanelManager::runTicker(
     }
 }
 
-}  // namespace tgbot
+} // namespace tgbot

@@ -10,15 +10,12 @@
 namespace warden {
 
 inline bool deleteErrorMeansGone(std::string_view description) {
-    return description.find("message to delete not found") !=
-               std::string_view::npos ||
-           description.find("message can't be deleted") !=
-               std::string_view::npos ||
+    return description.find("message to delete not found") != std::string_view::npos ||
+           description.find("message can't be deleted") != std::string_view::npos ||
            description.find("message is too old") != std::string_view::npos ||
            description.find("MESSAGE_ID_INVALID") != std::string_view::npos ||
            description.find("MESSAGE_NOT_FOUND") != std::string_view::npos ||
-           description.find("ephemeral message not found") !=
-               std::string_view::npos;
+           description.find("ephemeral message not found") != std::string_view::npos;
 }
 
-}  // namespace warden
+} // namespace warden

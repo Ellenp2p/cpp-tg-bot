@@ -25,21 +25,21 @@
 // 环境变量见 examples/warden/README.md。
 
 #include "alerts.hpp"
+#include "autodel.hpp"
 #include "commands.hpp"
 #include "config.hpp"
-#include "warden_util.hpp"
-#include "warden_menus.hpp"
-#include "replies.hpp"
-#include "warden_guard.hpp"
-#include "warden_chat_sync.hpp"
-#include "warden_texts.hpp"
-#include "warden_views.hpp"
-#include "autodel.hpp"
-#include "warden_events.hpp"
 #include "health.hpp"
 #include "media.hpp"
+#include "replies.hpp"
 #include "scheduler.hpp"
 #include "store.hpp"
+#include "warden_chat_sync.hpp"
+#include "warden_events.hpp"
+#include "warden_guard.hpp"
+#include "warden_menus.hpp"
+#include "warden_texts.hpp"
+#include "warden_util.hpp"
+#include "warden_views.hpp"
 
 #include <tgbot/tg_bot.hpp>
 
@@ -78,7 +78,7 @@ namespace {
 
 constexpr const char* kCallbackPrefix = "wd:";
 
-}  // namespace
+} // namespace
 
 // 命令权限/菜单统一从 commands.hpp 读，不散落在 handler。
 void setupLogging(const Config& cfg) {
@@ -87,8 +87,8 @@ void setupLogging(const Config& cfg) {
         auto console = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
         auto file = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
             cfg.logDir + "/warden.log", 5 * 1024 * 1024, 3);
-        auto logger = std::make_shared<spdlog::logger>(
-            "warden", spdlog::sinks_init_list{console, file});
+        auto logger =
+            std::make_shared<spdlog::logger>("warden", spdlog::sinks_init_list{console, file});
         logger->set_level(spdlog::level::from_str(cfg.logLevel));
         logger->flush_on(spdlog::level::warn);
         spdlog::set_default_logger(logger);
@@ -111,7 +111,10 @@ net::awaitable<int> run(Config cfg) {
         botId = me.value("id", std::int64_t{0});
         botUsername = me.value("username", std::string{});
         spdlog::info("Warden {} connected as @{} (id={}, instance={})",
-                     kWardenVersion, botUsername, botId, cfg.instanceId);
+                     kWardenVersion,
+                     botUsername,
+                     botId,
+                     cfg.instanceId);
     } catch (const std::exception& e) {
         spdlog::error("getMe failed: {}", e.what());
         co_return 1;
@@ -142,8 +145,7 @@ net::awaitable<int> run(Config cfg) {
     auto store = std::make_shared<Store>(cfg.dbPath);
     const int recovered = store->resetInflight();
     if (recovered > 0) {
-        spdlog::info("recovered {} inflight deletion job(s) from last run",
-                     recovered);
+        spdlog::info("recovered {} inflight deletion job(s) from last run", recovered);
     }
 
     const auto executor = co_await net::this_coro::executor;
@@ -153,10 +155,8 @@ net::awaitable<int> run(Config cfg) {
     std::shared_ptr<HealthServer> health;
     if (cfg.healthPort > 0) {
         health = std::make_shared<HealthServer>(
-            *store, gShuttingDown, cfg.instanceId, kWardenVersion,
-            cfg.controlToken);
-        health->start(executor, cfg.healthHost,
-                      static_cast<unsigned short>(cfg.healthPort));
+            *store, gShuttingDown, cfg.instanceId, kWardenVersion, cfg.controlToken);
+        health->start(executor, cfg.healthHost, static_cast<unsigned short>(cfg.healthPort));
     }
 
     // 告警出口：owner 私聊 + 飞书 + Discord 可同时开，互不影响。
@@ -165,8 +165,7 @@ net::awaitable<int> run(Config cfg) {
         alerts->add(makeOwnerDmSink(bot, cfg.owners));
     }
     if (!cfg.alertFeishuUrl.empty()) {
-        alerts->add(
-            makeFeishuSink(cfg.alertFeishuUrl, cfg.alertFeishuSecret));
+        alerts->add(makeFeishuSink(cfg.alertFeishuUrl, cfg.alertFeishuSecret));
         spdlog::info("alert sink enabled: feishu");
     }
     if (!cfg.alertDiscordUrl.empty()) {
@@ -192,12 +191,9 @@ net::awaitable<int> run(Config cfg) {
 
     const auto startedAt = std::chrono::steady_clock::now();
     auto knownChats = std::make_shared<std::unordered_set<std::int64_t>>();
-    auto menus = std::make_shared<GroupMenuPublisher>(groupAdminCommands(),
-                                                      cfg.groupMenus);
+    auto menus = std::make_shared<GroupMenuPublisher>(groupAdminCommands(), cfg.groupMenus);
     // 后台补发历史群的管理员菜单；不阻塞启动，也不影响收消息
-    net::co_spawn(executor,
-                  publishAllGroupMenus(bot, *store, *menus),
-                  net::detached);
+    net::co_spawn(executor, publishAllGroupMenus(bot, *store, *menus), net::detached);
 
     tgbot::Dispatcher dispatcher;
     dispatcher.setBotUsername(botUsername);
@@ -205,83 +201,70 @@ net::awaitable<int> run(Config cfg) {
     // 群内所有命令仅群管理员可用；非管理员静默丢弃（连"没权限"都不回，
     // 避免陌生人用 /autodel 试探群设置）。私聊命令不受影响。
     dispatcher.setCommandGuard(
-        [store, sched, menus, owners = cfg.owners](
-            BotClient& b, json msg) -> net::awaitable<bool> {
-            co_return co_await groupCommandGuard(b, *store, *sched, owners,
-                                                 *menus, msg);
+        [store, sched, menus, owners = cfg.owners](BotClient& b, json msg) -> net::awaitable<bool> {
+            co_return co_await groupCommandGuard(b, *store, *sched, owners, *menus, msg);
         });
 
-    dispatcher.onMyChatMember(
-        [store, sched, menus, botId, knownChats](BotClient& b, const json mcm)
-            -> net::awaitable<void> {
-            co_await handleMyChatMember(b, *store, *sched, *menus, botId,
-                                        knownChats, mcm);
-        });
+    dispatcher.onMyChatMember([store, sched, menus, botId, knownChats](
+                                  BotClient& b, const json mcm) -> net::awaitable<void> {
+        co_await handleMyChatMember(b, *store, *sched, *menus, botId, knownChats, mcm);
+    });
 
     // 未注册命令：只有明确 /foo@本bot 才删；/foo 和 /foo@OtherBot 不碰
-    dispatcher.onAnyMessage(
-        [botUsername](BotClient& b, const json msg) -> net::awaitable<void> {
-            if (!isGroupType(chatTypeOf(msg))) {
-                co_return;
-            }
-            if (!isCommandAddressedToBot(msg, botUsername)) {
-                co_return;
-            }
-            co_await sweepGroupCommand(b, msg);
-        });
+    dispatcher.onAnyMessage([botUsername](BotClient& b, const json msg) -> net::awaitable<void> {
+        if (!isGroupType(chatTypeOf(msg))) {
+            co_return;
+        }
+        if (!isCommandAddressedToBot(msg, botUsername)) {
+            co_return;
+        }
+        co_await sweepGroupCommand(b, msg);
+    });
 
     dispatcher.onAnyMessage(
-        [store, sched, knownChats](BotClient& b, const json msg)
-            -> net::awaitable<void> {
+        [store, sched, knownChats](BotClient& b, const json msg) -> net::awaitable<void> {
             co_await handleMedia(b, *store, *sched, msg, knownChats);
         });
 
     // 置顶事件：把被置顶的消息登记为"永不自动删除"，并取消已排程的删除。
     // Telegram 在置顶时发一条带 pinned_message 的服务消息；这里只依赖它，
     // 不额外调 getChat，避免高频开销。
-    dispatcher.onAnyMessage(
-        [store, sched](BotClient&, const json msg) -> net::awaitable<void> {
-            const auto it = msg.find("pinned_message");
-            if (it == msg.end() || !it->is_object()) {
-                co_return;
-            }
-            const auto chatId = chatIdOf(msg);
-            const auto pinnedId = it->value("message_id", std::int64_t{0});
-            if (chatId == 0 || pinnedId == 0) {
-                co_return;
-            }
-            store->markPinned(chatId, pinnedId, nowSec());
-            sched->cancelMessage(chatId, pinnedId);
-            spdlog::info("pinned message protected: chat={} msg={}", chatId,
-                         pinnedId);
-        });
+    dispatcher.onAnyMessage([store, sched](BotClient&, const json msg) -> net::awaitable<void> {
+        const auto it = msg.find("pinned_message");
+        if (it == msg.end() || !it->is_object()) {
+            co_return;
+        }
+        const auto chatId = chatIdOf(msg);
+        const auto pinnedId = it->value("message_id", std::int64_t{0});
+        if (chatId == 0 || pinnedId == 0) {
+            co_return;
+        }
+        store->markPinned(chatId, pinnedId, nowSec());
+        sched->cancelMessage(chatId, pinnedId);
+        spdlog::info("pinned message protected: chat={} msg={}", chatId, pinnedId);
+    });
 
     // 自然语言别名：群里发“自动删除 贴纸 开启 10秒”等价于
     // /autodel 贴纸 10秒。前缀必须单独成词，避免误伤普通聊天。
     dispatcher.onAnyMessage(
-        [store, sched, cfg](BotClient& b, const json msg)
-            -> net::awaitable<void> {
+        [store, sched, cfg](BotClient& b, const json msg) -> net::awaitable<void> {
             if (!isGroupType(chatTypeOf(msg))) {
                 co_return;
             }
             const auto text = trim(msg.value("text", std::string{}));
-            static constexpr std::string_view kPrefixes[] = {"自动删除",
-                                                             "自动清理"};
+            static constexpr std::string_view kPrefixes[] = {"自动删除", "自动清理"};
             for (const auto prefix : kPrefixes) {
-                if (std::string_view{text}.substr(0, prefix.size()) !=
-                    prefix) {
+                if (std::string_view{text}.substr(0, prefix.size()) != prefix) {
                     continue;
                 }
                 if (text.size() > prefix.size()) {
-                    const auto next =
-                        static_cast<unsigned char>(text[prefix.size()]);
+                    const auto next = static_cast<unsigned char>(text[prefix.size()]);
                     if (!std::isspace(next) && next != ':' &&
                         text.compare(prefix.size(), 3, "：") != 0) {
                         continue;
                     }
                 }
-                std::string args =
-                    trim(std::string_view{text}.substr(prefix.size()));
+                std::string args = trim(std::string_view{text}.substr(prefix.size()));
                 while (!args.empty()) {
                     if (args.front() == ':') {
                         args = trim(std::string_view{args}.substr(1));
@@ -294,8 +277,7 @@ net::awaitable<int> run(Config cfg) {
                     break;
                 }
                 // 自然语言命令本体不删；只处理命令、回复按 TTL 清理
-                co_await handleAutodel(b, *store, *sched, msg, args, false,
-                                       cfg, true);
+                co_await handleAutodel(b, *store, *sched, msg, args, false, cfg, true);
                 co_return;
             }
         });
@@ -303,109 +285,92 @@ net::awaitable<int> run(Config cfg) {
     // ---- /start /help ----
     dispatcher.onCommand(
         "start",
-        [store, sched, cfg, botUsername, startedAt](
-            BotClient& b, const json msg) -> net::awaitable<void> {
+        [store, sched, cfg, botUsername, startedAt](BotClient& b,
+                                                    const json msg) -> net::awaitable<void> {
             const auto chatType = chatTypeOf(msg);
-            const auto userId = msg.value("from", json::object())
-                                    .value("id", std::int64_t{0});
+            const auto userId = msg.value("from", json::object()).value("id", std::int64_t{0});
             if (chatType == "private") {
                 if (isOwner(cfg, userId)) {
                     co_await b.sendMessage(
-                        chatIdOf(msg), dashboardText(*store, startedAt),
-                        dashboardKeyboard());
+                        chatIdOf(msg), dashboardText(*store, startedAt), dashboardKeyboard());
                 } else {
                     tgbot::SendOptions options;
                     options.parseMode = tgbot::ParseMode::kHtml;
-                    co_await b.sendMessage(chatIdOf(msg),
-                                           helpText(botUsername), options);
+                    co_await b.sendMessage(chatIdOf(msg), helpText(botUsername), options);
                 }
                 co_return;
             }
             co_await replyEphemeral(
-                b, *sched, msg,
-                isOwner(cfg, userId) ? "私聊我打开控制台：/panel"
-                                     : "私聊我发 /help 查看用法",
-                nullptr, tgbot::ParseMode::kHtml);
+                b,
+                *sched,
+                msg,
+                isOwner(cfg, userId) ? "私聊我打开控制台：/panel" : "私聊我发 /help 查看用法",
+                nullptr,
+                tgbot::ParseMode::kHtml);
         });
 
-    dispatcher.onCommand(
-        "help", [botUsername](BotClient& b, const json msg)
-                    -> net::awaitable<void> {
-            // commands.hpp 已把 /help 设为 privateOnly，群里被守卫拦掉
-            tgbot::SendOptions options;
-            options.parseMode = tgbot::ParseMode::kHtml;
-            co_await b.sendMessage(chatIdOf(msg), helpText(botUsername),
-                                   options);
-        });
+    dispatcher.onCommand("help",
+                         [botUsername](BotClient& b, const json msg) -> net::awaitable<void> {
+                             // commands.hpp 已把 /help 设为 privateOnly，群里被守卫拦掉
+                             tgbot::SendOptions options;
+                             options.parseMode = tgbot::ParseMode::kHtml;
+                             co_await b.sendMessage(chatIdOf(msg), helpText(botUsername), options);
+                         });
 
-        // ---- /autodel ----
+    // ---- /autodel ----
     dispatcher.onCommand(
-        "autodel",
-        [store, sched, cfg](BotClient& b, const json msg)
-            -> net::awaitable<void> {
-            co_await handleAutodel(b, *store, *sched, msg, commandArgs(msg),
-                                   true, cfg, false);
+        "autodel", [store, sched, cfg](BotClient& b, const json msg) -> net::awaitable<void> {
+            co_await handleAutodel(b, *store, *sched, msg, commandArgs(msg), true, cfg, false);
         });
 
     // ---- /status ----
     dispatcher.onCommand(
-        "status",
-        [store, sched, botId](BotClient& b, const json msg)
-            -> net::awaitable<void> {
+        "status", [store, sched, botId](BotClient& b, const json msg) -> net::awaitable<void> {
             const auto chatId = chatIdOf(msg);
             if (!isGroupType(chatTypeOf(msg))) {
-                co_await b.sendMessage(
-                    chatId,
-                    "群内使用：把我设为群管理员后发 /status。");
+                co_await b.sendMessage(chatId, "群内使用：把我设为群管理员后发 /status。");
                 co_return;
             }
             const auto record = co_await refreshChat(b, *store, botId, chatId);
             if (!record.has_value()) {
-                co_await replyEphemeral(b, *sched, msg,
-                                        "查询群信息失败，请稍后重试。");
+                co_await replyEphemeral(b, *sched, msg, "查询群信息失败，请稍后重试。");
                 co_return;
             }
-            std::string text =
-                "🛡 我在「" + (record->title.empty() ? std::string{"本群"} : record->title) +
-                "」的身份：" + record->botStatus + "\n";
+            std::string text = "🛡 我在「" +
+                               (record->title.empty() ? std::string{"本群"} : record->title) +
+                               "」的身份：" + record->botStatus + "\n";
             text += "删除消息：" + boolMark(record->canDelete) + "\n";
             text += "限制成员：" + boolMark(record->canRestrict) + "\n";
             text += "置顶消息：" + boolMark(record->canPin) + "\n";
             text += "邀请用户：" + boolMark(record->canInvite) + "\n";
             text += "管理群聊：" + boolMark(record->canManage) + "\n\n";
-            text += record->canDelete
-                        ? "✅ 权限足够，可以执行自动删除。"
-                        : "⚠️ 缺少「删除消息」权限：请到群设置 → 管理员 → 我的权限"
-                          "里勾选，或重新把我设为管理员。";
+            text += record->canDelete ? "✅ 权限足够，可以执行自动删除。"
+                                      : "⚠️ 缺少「删除消息」权限：请到群设置 → 管理员 → 我的权限"
+                                        "里勾选，或重新把我设为管理员。";
             co_await replyEphemeral(b, *sched, msg, text);
         });
 
     // ---- /id ----
-    dispatcher.onCommand(
-        "id", [sched](BotClient& b, const json msg) -> net::awaitable<void> {
-            const auto user = msg.value("from", json::object());
-            const std::string text =
-                "🆔 用户 ID：" +
-                std::to_string(user.value("id", std::int64_t{0})) +
-                "\n群 ID：" + std::to_string(chatIdOf(msg));
-            if (isGroupType(chatTypeOf(msg))) {
-                co_await replyEphemeral(b, *sched, msg, text);
-                co_return;
-            }
-            co_await b.sendMessage(chatIdOf(msg), text);
-        });
+    dispatcher.onCommand("id", [sched](BotClient& b, const json msg) -> net::awaitable<void> {
+        const auto user = msg.value("from", json::object());
+        const std::string text = "🆔 用户 ID：" +
+                                 std::to_string(user.value("id", std::int64_t{0})) + "\n群 ID：" +
+                                 std::to_string(chatIdOf(msg));
+        if (isGroupType(chatTypeOf(msg))) {
+            co_await replyEphemeral(b, *sched, msg, text);
+            co_return;
+        }
+        co_await b.sendMessage(chatIdOf(msg), text);
+    });
 
     // ---- /panel /mygroups /stats ----
     dispatcher.onCommand(
-        "panel",
-        [store, cfg, startedAt](BotClient& b, const json msg)
-            -> net::awaitable<void> {
+        "panel", [store, cfg, startedAt](BotClient& b, const json msg) -> net::awaitable<void> {
             const auto chatId = chatIdOf(msg);
-            const auto userId = msg.value("from", json::object())
-                                    .value("id", std::int64_t{0});
+            const auto userId = msg.value("from", json::object()).value("id", std::int64_t{0});
             if (isOwner(cfg, userId)) {
-                co_await b.sendMessage(chatId, dashboardText(*store, startedAt),
-                                       dashboardKeyboard());
+                co_await b.sendMessage(
+                    chatId, dashboardText(*store, startedAt), dashboardKeyboard());
                 co_return;
             }
             // 普通用户：只显示自己管理的、且机器人还在群里的群。
@@ -418,92 +383,75 @@ net::awaitable<int> run(Config cfg) {
                 chats = store->chatsForAdmin(userId);
             }
             if (chats.empty()) {
-                co_await b.sendMessage(
-                    chatId,
-                    "你还没有管理中的群，或者机器人不在那些群里。\n\n"
-                    "把我拉进群并设为管理员后，再发 /panel。\n"
-                    "如果机器人已经在群里，发一次 /autodel 让我刷新名册。");
+                co_await b.sendMessage(chatId,
+                                       "你还没有管理中的群，或者机器人不在那些群里。\n\n"
+                                       "把我拉进群并设为管理员后，再发 /panel。\n"
+                                       "如果机器人已经在群里，发一次 /autodel 让我刷新名册。");
                 co_return;
             }
-            co_await b.sendMessage(chatId, adminDashboardText(*store, userId),
-                                   dashboardKeyboard());
+            co_await b.sendMessage(chatId, adminDashboardText(*store, userId), dashboardKeyboard());
         });
 
-    dispatcher.onCommand(
-        "mygroups",
-        [store](BotClient& b, const json msg) -> net::awaitable<void> {
-            const auto chatId = chatIdOf(msg);
-            const auto userId = msg.value("from", json::object())
-                                    .value("id", std::int64_t{0});
-            auto chats = store->chatsForAdmin(userId);
-            if (chats.empty()) {
-                // 名册是缓存：先补拉最近 12 个活跃群的管理员列表，
-                // 避免"机器人早就进群了，但名册是空的"看起来像坏了。
-                for (const auto& recent : store->listChats(12, 0, true)) {
-                    co_await refreshAdmins(b, *store, recent.chatId);
-                }
-                chats = store->chatsForAdmin(userId);
+    dispatcher.onCommand("mygroups", [store](BotClient& b, const json msg) -> net::awaitable<void> {
+        const auto chatId = chatIdOf(msg);
+        const auto userId = msg.value("from", json::object()).value("id", std::int64_t{0});
+        auto chats = store->chatsForAdmin(userId);
+        if (chats.empty()) {
+            // 名册是缓存：先补拉最近 12 个活跃群的管理员列表，
+            // 避免"机器人早就进群了，但名册是空的"看起来像坏了。
+            for (const auto& recent : store->listChats(12, 0, true)) {
+                co_await refreshAdmins(b, *store, recent.chatId);
             }
-            if (chats.empty()) {
-                co_await b.sendMessage(
-                    chatId,
-                    "名册里还没有你管理的群。\n"
-                    "把我拉进群并设为管理员，或者在群里发一次 /autodel 后我再查。");
-                co_return;
-            }
-            std::string text = "👥 你管理的群（缓存名册）：\n\n";
-            for (const auto& chat : chats) {
-                text += std::string{chat.enabled ? "🟢" : "⚪"} + " " +
-                        (chat.title.empty() ? std::to_string(chat.chatId)
-                                            : chat.title);
-                text += chat.canDelete ? "" : " ⚠️缺删除权限";
-                text += "\n";
-            }
-            co_await b.sendMessage(chatId, text);
-        });
+            chats = store->chatsForAdmin(userId);
+        }
+        if (chats.empty()) {
+            co_await b.sendMessage(chatId,
+                                   "名册里还没有你管理的群。\n"
+                                   "把我拉进群并设为管理员，或者在群里发一次 /autodel 后我再查。");
+            co_return;
+        }
+        std::string text = "👥 你管理的群（缓存名册）：\n\n";
+        for (const auto& chat : chats) {
+            text += std::string{chat.enabled ? "🟢" : "⚪"} + " " +
+                    (chat.title.empty() ? std::to_string(chat.chatId) : chat.title);
+            text += chat.canDelete ? "" : " ⚠️缺删除权限";
+            text += "\n";
+        }
+        co_await b.sendMessage(chatId, text);
+    });
 
     dispatcher.onCommand(
-        "stats",
-        [store, cfg, startedAt](BotClient& b, const json msg)
-            -> net::awaitable<void> {
+        "stats", [store, cfg, startedAt](BotClient& b, const json msg) -> net::awaitable<void> {
             const auto chatId = chatIdOf(msg);
-            const auto userId = msg.value("from", json::object())
-                                    .value("id", std::int64_t{0});
+            const auto userId = msg.value("from", json::object()).value("id", std::int64_t{0});
             if (!isOwner(cfg, userId)) {
                 co_await b.sendMessage(chatId, "仅机器人拥有者可用。");
                 co_return;
             }
-            co_await b.sendMessage(chatId, dashboardText(*store, startedAt),
-                                   dashboardKeyboard());
+            co_await b.sendMessage(chatId, dashboardText(*store, startedAt), dashboardKeyboard());
         });
 
     // 隐藏命令：给 owner 自测飞书/Discord 通道用，不放进 / 菜单
     dispatcher.onCommand(
-        "alerttest",
-        [cfg, alerts](BotClient& b, const json msg)
-            -> net::awaitable<void> {
+        "alerttest", [cfg, alerts](BotClient& b, const json msg) -> net::awaitable<void> {
             const auto chatId = chatIdOf(msg);
             if (!isOwner(cfg, senderId(msg))) {
                 co_await b.sendMessage(chatId, "仅机器人拥有者可在私聊使用。");
                 co_return;
             }
-            alerts->publish(
-                "🧪 Warden 测试告警 " + std::to_string(nowSec()) +
-                "\n如果你在飞书/Discord 看到这条，说明通道配置正确。");
-            co_await b.sendMessage(
-                chatId, "已提交到所有已配置的告警通道；失败原因见日志。");
+            alerts->publish("🧪 Warden 测试告警 " + std::to_string(nowSec()) +
+                            "\n如果你在飞书/Discord 看到这条，说明通道配置正确。");
+            co_await b.sendMessage(chatId, "已提交到所有已配置的告警通道；失败原因见日志。");
         });
 
     // ---- 拥有者后台回调 ----
     dispatcher.onCallbackQuery(
         kCallbackPrefix,
-        [store, sched, cfg, botId, startedAt](BotClient& b, const json cq)
-            -> net::awaitable<void> {
+        [store, sched, cfg, botId, startedAt](BotClient& b, const json cq) -> net::awaitable<void> {
             const auto cqId = cq.value("id", std::string{});
             const auto user = cq.value("from", json::object());
             const auto userId = user.value("id", std::int64_t{0});
-            const auto answer = [&](std::string text,
-                                    bool alert = false) -> net::awaitable<void> {
+            const auto answer = [&](std::string text, bool alert = false) -> net::awaitable<void> {
                 try {
                     co_await b.answerCallbackQuery(cqId, text, alert);
                 } catch (const std::exception&) {
@@ -514,13 +462,11 @@ net::awaitable<int> run(Config cfg) {
             const bool owner = isOwner(cfg, userId);
             // 回调鉴权实时查一次 getChatMember，避免 chat_admins 缓存过期后
             // 被撤销的管理员还能改设置；查询失败按无权限处理（fail closed）。
-            const auto canManageChat = [&](std::int64_t chatId)
-                -> net::awaitable<bool> {
+            const auto canManageChat = [&](std::int64_t chatId) -> net::awaitable<bool> {
                 if (owner) {
                     co_return true;
                 }
-                const auto status =
-                    co_await fetchMemberStatus(b, chatId, userId);
+                const auto status = co_await fetchMemberStatus(b, chatId, userId);
                 co_return status.has_value() && isAdminStatus(*status);
             };
 
@@ -531,36 +477,32 @@ net::awaitable<int> run(Config cfg) {
             }
             const auto panelChatId =
                 msgIt->value("chat", json::object()).value("id", std::int64_t{0});
-            const auto panelMsgId =
-                msgIt->value("message_id", std::int64_t{0});
+            const auto panelMsgId = msgIt->value("message_id", std::int64_t{0});
             if (panelChatId == 0 || panelMsgId == 0) {
                 co_await answer("这个面板已失效，请重新 /panel。", true);
                 co_return;
             }
             const auto data = cq.value("data", std::string{});
-            const auto action =
-                data.substr(std::string{kCallbackPrefix}.size());
+            const auto action = data.substr(std::string{kCallbackPrefix}.size());
 
-            auto show = [&](std::string text, json keyboard,
+            auto show = [&](std::string text,
+                            json keyboard,
                             tgbot::ParseMode parseMode =
-                                tgbot::ParseMode::kNone)
-                -> net::awaitable<void> {
-                co_await showPanel(b, panelChatId, panelMsgId, std::move(text),
-                                   std::move(keyboard), parseMode);
+                                tgbot::ParseMode::kNone) -> net::awaitable<void> {
+                co_await showPanel(
+                    b, panelChatId, panelMsgId, std::move(text), std::move(keyboard), parseMode);
             };
 
             if (action == "home") {
                 co_await answer("");
-                co_await show(owner
-                                  ? dashboardText(*store, startedAt)
-                                  : adminDashboardText(*store, userId),
-                              dashboardKeyboard());
+                co_await show(
+                    owner ? dashboardText(*store, startedAt) : adminDashboardText(*store, userId),
+                    dashboardKeyboard());
                 co_return;
             }
             if (action == "help") {
                 co_await answer("");
-                co_await show(helpText(""), dashboardKeyboard(),
-                              tgbot::ParseMode::kHtml);
+                co_await show(helpText(""), dashboardKeyboard(), tgbot::ParseMode::kHtml);
                 co_return;
             }
             if (action.rfind("list:", 0) == 0) {
@@ -572,8 +514,7 @@ net::awaitable<int> run(Config cfg) {
                 }
                 co_await answer("");
                 if (owner) {
-                    co_await show(listText(*store, page),
-                                  listKeyboard(*store, page));
+                    co_await show(listText(*store, page), listKeyboard(*store, page));
                 } else {
                     co_await show(adminListText(*store, userId, page),
                                   adminListKeyboard(*store, userId, page));
@@ -581,8 +522,7 @@ net::awaitable<int> run(Config cfg) {
                 co_return;
             }
 
-            const auto parseId = [&](std::string_view prefix)
-                -> std::optional<std::int64_t> {
+            const auto parseId = [&](std::string_view prefix) -> std::optional<std::int64_t> {
                 if (action.rfind(prefix, 0) != 0) {
                     return std::nullopt;
                 }
@@ -593,8 +533,7 @@ net::awaitable<int> run(Config cfg) {
                 }
             };
 
-            const auto parseIdAndTail =
-                [&](std::string_view prefix)
+            const auto parseIdAndTail = [&](std::string_view prefix)
                 -> std::optional<std::pair<std::int64_t, std::string>> {
                 if (action.rfind(prefix, 0) != 0) {
                     return std::nullopt;
@@ -605,9 +544,8 @@ net::awaitable<int> run(Config cfg) {
                     return std::nullopt;
                 }
                 try {
-                    return std::make_pair(
-                        std::stoll(rest.substr(0, colon)),
-                        rest.substr(colon + 1));
+                    return std::make_pair(std::stoll(rest.substr(0, colon)),
+                                          rest.substr(colon + 1));
                 } catch (const std::exception&) {
                     return std::nullopt;
                 }
@@ -645,19 +583,16 @@ net::awaitable<int> run(Config cfg) {
                     co_await answer("群不存在。", true);
                     co_return;
                 }
-                const int next =
-                    nextPreset(effectiveDelay(*store, chatId, kind));
+                const int next = nextPreset(effectiveDelay(*store, chatId, kind));
                 store->setDelay(chatId, kind, next);
                 if (next > 0) {
                     store->setEnabled(chatId, true);
                 } else {
                     sched->cancelKind(chatId, kind);
                 }
-                store->audit(chatId, userId, "panel.set." + kind,
-                             std::to_string(next));
+                store->audit(chatId, userId, "panel.set." + kind, std::to_string(next));
                 record = store->chat(chatId);
-                co_await answer(std::string{kindLabel(kind)} + "：" +
-                                formatDelay(next));
+                co_await answer(std::string{kindLabel(kind)} + "：" + formatDelay(next));
                 if (record.has_value()) {
                     co_await show(settingsPageText(*store, *record),
                                   settingsPageKeyboard(*store, *record));
@@ -682,8 +617,7 @@ net::awaitable<int> run(Config cfg) {
                     co_await answer("时限参数非法。", true);
                     co_return;
                 }
-                if (seconds != 0 &&
-                    (seconds < cfg.minDelaySec || seconds > cfg.maxDelaySec)) {
+                if (seconds != 0 && (seconds < cfg.minDelaySec || seconds > cfg.maxDelaySec)) {
                     co_await answer("时限超出范围。", true);
                     co_return;
                 }
@@ -696,8 +630,7 @@ net::awaitable<int> run(Config cfg) {
                 if (seconds > 0) {
                     store->setEnabled(chatId, true);
                 }
-                store->audit(chatId, userId, "panel.set.all",
-                             std::to_string(seconds));
+                store->audit(chatId, userId, "panel.set.all", std::to_string(seconds));
                 const auto record = store->chat(chatId);
                 co_await answer("已更新");
                 if (record.has_value()) {
@@ -718,8 +651,7 @@ net::awaitable<int> run(Config cfg) {
                     co_return;
                 }
                 co_await answer("");
-                co_await show(detailText(*store, *record),
-                              detailKeyboard(*record, owner));
+                co_await show(detailText(*store, *record), detailKeyboard(*record, owner));
                 co_return;
             }
 
@@ -738,12 +670,10 @@ net::awaitable<int> run(Config cfg) {
                 if (!next) {
                     sched->cancelChat(*id);
                 }
-                store->audit(*id, userId, next ? "panel.enable" : "panel.disable",
-                             "");
+                store->audit(*id, userId, next ? "panel.enable" : "panel.disable", "");
                 record->enabled = next;
                 co_await answer(next ? "已启用" : "已停用");
-                co_await show(detailText(*store, *record),
-                              detailKeyboard(*record, owner));
+                co_await show(detailText(*store, *record), detailKeyboard(*record, owner));
                 co_return;
             }
 
@@ -758,8 +688,7 @@ net::awaitable<int> run(Config cfg) {
                     co_await answer("刷新失败：可能已被踢出或网络异常。", true);
                     co_return;
                 }
-                co_await show(detailText(*store, *record),
-                              detailKeyboard(*record, owner));
+                co_await show(detailText(*store, *record), detailKeyboard(*record, owner));
                 co_return;
             }
 
@@ -772,8 +701,7 @@ net::awaitable<int> run(Config cfg) {
                 const auto record = store->chat(*id);
                 co_await answer("已取消待删任务");
                 if (record.has_value()) {
-                    co_await show(detailText(*store, *record),
-                                  detailKeyboard(*record, owner));
+                    co_await show(detailText(*store, *record), detailKeyboard(*record, owner));
                 }
                 co_return;
             }
@@ -792,21 +720,15 @@ net::awaitable<int> run(Config cfg) {
                 json kb = {
                     {"inline_keyboard",
                      json::array(
-                         {json::array(
-                              {json{{"text", "确认退出"},
-                                    {"callback_data",
-                                     "wd:xo:" + std::to_string(*id)}}}),
-                          json::array(
-                              {json{{"text", "取消"},
-                                    {"callback_data",
-                                     "wd:g:" + std::to_string(*id)}}})})}};
-                co_await show(
-                    "⚠️ 确认退出「" +
-                        (record->title.empty() ? std::to_string(*id)
-                                               : record->title) +
-                        "」？\n\n退出后本群所有待删任务会被取消，"
-                        "需要重新邀请我才能继续管理。",
-                    kb);
+                         {json::array({json{{"text", "确认退出"},
+                                            {"callback_data", "wd:xo:" + std::to_string(*id)}}}),
+                          json::array({json{{"text", "取消"},
+                                            {"callback_data", "wd:g:" + std::to_string(*id)}}})})}};
+                co_await show("⚠️ 确认退出「" +
+                                  (record->title.empty() ? std::to_string(*id) : record->title) +
+                                  "」？\n\n退出后本群所有待删任务会被取消，"
+                                  "需要重新邀请我才能继续管理。",
+                              kb);
                 co_return;
             }
 
@@ -837,25 +759,24 @@ net::awaitable<int> run(Config cfg) {
         });
 
     // ---- 接收模式 ----
-    spdlog::info("update queue: workers={}, maxPending={}",
-                 cfg.updateWorkers, cfg.maxPendingUpdates);
+    spdlog::info(
+        "update queue: workers={}, maxPending={}", cfg.updateWorkers, cfg.maxPendingUpdates);
     if (cfg.useWebhook) {
-        spdlog::info("webhook mode: {} (listen {}:{})", cfg.webhook.publicUrl,
-                     cfg.webhook.host, cfg.webhook.port);
-        co_await tgbot::webhookLoop(bot, dispatcher, cfg.webhook,
-                                    &gShuttingDown);
+        spdlog::info("webhook mode: {} (listen {}:{})",
+                     cfg.webhook.publicUrl,
+                     cfg.webhook.host,
+                     cfg.webhook.port);
+        co_await tgbot::webhookLoop(bot, dispatcher, cfg.webhook, &gShuttingDown);
     } else {
         tgbot::LongPollOptions opts;
         opts.offsetFile = cfg.offsetFile;
         opts.dropPendingUpdates = cfg.dropPendingUpdates;
         opts.pollTimeoutSeconds = cfg.pollTimeoutSeconds;
-        opts.maxPendingUpdates =
-            static_cast<std::size_t>(cfg.maxPendingUpdates);
+        opts.maxPendingUpdates = static_cast<std::size_t>(cfg.maxPendingUpdates);
         opts.updateWorkers = cfg.updateWorkers;
         // 不订阅 my_chat_member 就永远不知道被拉进/踢出了哪些群
         opts.allowedUpdates = R"(["message","callback_query","my_chat_member"])";
-        spdlog::info("long polling mode (resume={})",
-                     !cfg.dropPendingUpdates ? "yes" : "no");
+        spdlog::info("long polling mode (resume={})", !cfg.dropPendingUpdates ? "yes" : "no");
         co_await tgbot::longPollLoop(bot, dispatcher, opts, &gShuttingDown);
     }
 
@@ -863,15 +784,14 @@ net::awaitable<int> run(Config cfg) {
     // 再等 Dispatcher 的 in-flight update 归零。硬上限由 drainSeconds 控制，
     // 超时也只影响在途 handler，删除任务都已落库。
     if (gShuttingDown.load()) {
-        spdlog::info(
-            "draining: in-flight updates={}, timeout={}s, health={}",
-            dispatcher.inFlightUpdates(), cfg.drainSeconds,
-            health ? "on" : "off");
+        spdlog::info("draining: in-flight updates={}, timeout={}s, health={}",
+                     dispatcher.inFlightUpdates(),
+                     cfg.drainSeconds,
+                     health ? "on" : "off");
         co_await tgbot::co_sleep(std::chrono::milliseconds{200});
-        const auto deadline = std::chrono::steady_clock::now() +
-                              std::chrono::seconds{cfg.drainSeconds};
-        while (dispatcher.inFlightUpdates() > 0 &&
-               std::chrono::steady_clock::now() < deadline) {
+        const auto deadline =
+            std::chrono::steady_clock::now() + std::chrono::seconds{cfg.drainSeconds};
+        while (dispatcher.inFlightUpdates() > 0 && std::chrono::steady_clock::now() < deadline) {
             co_await tgbot::co_sleep(std::chrono::milliseconds{50});
         }
         if (dispatcher.inFlightUpdates() > 0) {
@@ -882,13 +802,12 @@ net::awaitable<int> run(Config cfg) {
         }
     }
 
-    spdlog::info("stopping: pending deletions={} (kept in database)",
-                 store->pendingDeletions());
+    spdlog::info("stopping: pending deletions={} (kept in database)", store->pendingDeletions());
     store->checkpoint();
     co_return 0;
 }
 
-}  // namespace warden
+} // namespace warden
 
 int main(int argc, char** argv) {
     if (argc > 1 && std::string_view{argv[1]} == "--version") {
@@ -910,8 +829,8 @@ int main(int argc, char** argv) {
 #ifdef SIGBREAK
     signals.add(SIGBREAK);
 #endif
-    signals.async_wait([&io, drainSeconds = cfg.drainSeconds](
-                           const boost::system::error_code& ec, int sig) {
+    signals.async_wait([&io, drainSeconds = cfg.drainSeconds](const boost::system::error_code& ec,
+                                                              int sig) {
         if (ec) {
             return;
         }
@@ -921,11 +840,10 @@ int main(int argc, char** argv) {
             io.stop();
             return;
         }
-        spdlog::info("received signal {}, draining (timeout {}s + 5s hard)",
-                     sig, drainSeconds);
+        spdlog::info("received signal {}, draining (timeout {}s + 5s hard)", sig, drainSeconds);
         // 长轮询可能正阻塞在 getUpdates 里；硬超时确保进程不会永远不退。
-        auto timer = std::make_shared<boost::asio::steady_timer>(
-            io, std::chrono::seconds{drainSeconds + 5});
+        auto timer =
+            std::make_shared<boost::asio::steady_timer>(io, std::chrono::seconds{drainSeconds + 5});
         timer->async_wait([&io, timer](const boost::system::error_code& ec2) {
             if (!ec2) {
                 spdlog::warn("drain hard timeout, forcing exit");
@@ -935,27 +853,20 @@ int main(int argc, char** argv) {
     });
 
     int exitCode = 0;
-    boost::asio::co_spawn(
-        io, warden::run(cfg),
-        [&io, &exitCode](std::exception_ptr e, int code) {
-            if (e) {
-                try {
-                    std::rethrow_exception(e);
-                } catch (const std::exception& ex) {
-                    spdlog::error("fatal: {}", ex.what());
-                }
-                exitCode = 1;
-            } else {
-                exitCode = code;
+    boost::asio::co_spawn(io, warden::run(cfg), [&io, &exitCode](std::exception_ptr e, int code) {
+        if (e) {
+            try {
+                std::rethrow_exception(e);
+            } catch (const std::exception& ex) {
+                spdlog::error("fatal: {}", ex.what());
             }
-            io.stop();
-        });
+            exitCode = 1;
+        } else {
+            exitCode = code;
+        }
+        io.stop();
+    });
     io.run();
     spdlog::info("bye");
     return exitCode;
 }
-
-
-
-
-

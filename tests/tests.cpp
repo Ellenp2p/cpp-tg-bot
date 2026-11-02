@@ -6,20 +6,20 @@
 //   3. RateLimiter 的时间槽（同一聊天 ≥1s、全局 ≥~34ms）——这条同时是
 //      "先占槽后等待"修复的回归测试：旧实现在这里会测出 0 间隔
 
+#include <tgbot/amount.hpp>
 #include <tgbot/bot_client.hpp>
+#include <tgbot/chain_health.hpp>
 #include <tgbot/dispatcher.hpp>
 #include <tgbot/grab_queue.hpp>
 #include <tgbot/job_queue.hpp>
 #include <tgbot/lottery_panel.hpp>
 #include <tgbot/panel.hpp>
 #include <tgbot/rate_limiter.hpp>
-#include <tgbot/util.hpp>
-#include <tgbot/amount.hpp>
-#include <tgbot/chain_health.hpp>
 #include <tgbot/reconciliation.hpp>
 #include <tgbot/red_packet_batch.hpp>
 #include <tgbot/red_packet_ledger.hpp>
 #include <tgbot/red_packet_panel.hpp>
+#include <tgbot/util.hpp>
 
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
@@ -63,20 +63,17 @@ json makeTextMessage(std::string text, std::int64_t chatId = -100123) {
 }
 
 json makeCallback(std::string data) {
-    return json{
-        {"update_id", 2},
-        {"callback_query",
-         {{"id", "cb1"},
-          {"from", {{"id", 7}}},
-          {"data", std::move(data)},
-          {"message", {{"message_id", 9}, {"chat", {{"id", 7}}}}}}}};
+    return json{{"update_id", 2},
+                {"callback_query",
+                 {{"id", "cb1"},
+                  {"from", {{"id", 7}}},
+                  {"data", std::move(data)},
+                  {"message", {{"message_id", 9}, {"chat", {{"id", 7}}}}}}}};
 }
 
-void runDispatch(tgbot::Dispatcher& dispatcher, tgbot::BotClient& bot,
-                 json update) {
+void runDispatch(tgbot::Dispatcher& dispatcher, tgbot::BotClient& bot, json update) {
     net::io_context io;
-    net::co_spawn(io, dispatcher.dispatch(std::move(update), bot),
-                  net::detached);
+    net::co_spawn(io, dispatcher.dispatch(std::move(update), bot), net::detached);
     io.run();
 }
 
@@ -87,25 +84,23 @@ void testCommandParsing() {
     dispatcher.setBotUsername("MyBot");
 
     std::vector<std::string> seen;
-    dispatcher.onCommand(
-        "start", [&seen](tgbot::BotClient&, json msg) -> net::awaitable<void> {
-            seen.push_back(msg.value("text", std::string{}));
-            co_return;
-        });
-    dispatcher.onAnyMessage(
-        [&seen](tgbot::BotClient&, json msg) -> net::awaitable<void> {
-            seen.push_back("ANY:" + msg.value("text", std::string{}));
-            co_return;
-        });
+    dispatcher.onCommand("start", [&seen](tgbot::BotClient&, json msg) -> net::awaitable<void> {
+        seen.push_back(msg.value("text", std::string{}));
+        co_return;
+    });
+    dispatcher.onAnyMessage([&seen](tgbot::BotClient&, json msg) -> net::awaitable<void> {
+        seen.push_back("ANY:" + msg.value("text", std::string{}));
+        co_return;
+    });
 
     runDispatch(dispatcher, bot, makeTextMessage("/start"));
     runDispatch(dispatcher, bot, makeTextMessage("/start@MyBot a b"));
     runDispatch(dispatcher, bot, makeTextMessage("/start@OtherBot x"));
     runDispatch(dispatcher, bot, makeTextMessage("hello"));
 
-    CHECK(seen.size() == 3);  // 发给 OtherBot 的那条被完全忽略
+    CHECK(seen.size() == 3); // 发给 OtherBot 的那条被完全忽略
     CHECK(seen[0] == "/start");
-    CHECK(seen[1] == "/start a b");  // @Bot 后缀被归一化掉
+    CHECK(seen[1] == "/start a b"); // @Bot 后缀被归一化掉
     CHECK(seen[2] == "ANY:hello");
 }
 
@@ -115,20 +110,17 @@ void testCommandGuard() {
     tgbot::Dispatcher dispatcher;
 
     int calls = 0;
-    dispatcher.onCommand(
-        "admin", [&calls](tgbot::BotClient&, json) -> net::awaitable<void> {
-            ++calls;
-            co_return;
-        });
+    dispatcher.onCommand("admin", [&calls](tgbot::BotClient&, json) -> net::awaitable<void> {
+        ++calls;
+        co_return;
+    });
 
     bool allow = false;
     dispatcher.setCommandGuard(
-        [&allow](tgbot::BotClient&, json) -> net::awaitable<bool> {
-            co_return allow;
-        });
+        [&allow](tgbot::BotClient&, json) -> net::awaitable<bool> { co_return allow; });
 
     runDispatch(dispatcher, bot, makeTextMessage("/admin"));
-    CHECK(calls == 0);  // 守卫拒绝时 handler 不得执行
+    CHECK(calls == 0); // 守卫拒绝时 handler 不得执行
 
     allow = true;
     runDispatch(dispatcher, bot, makeTextMessage("/admin"));
@@ -141,11 +133,10 @@ void testCallbackPrefix() {
     tgbot::Dispatcher dispatcher;
 
     std::string hit;
-    dispatcher.onCallbackQuery(
-        "menu:", [&hit](tgbot::BotClient&, json) -> net::awaitable<void> {
-            hit = "menu:";
-            co_return;
-        });
+    dispatcher.onCallbackQuery("menu:", [&hit](tgbot::BotClient&, json) -> net::awaitable<void> {
+        hit = "menu:";
+        co_return;
+    });
     dispatcher.onCallbackQuery(
         "menu:sub:", [&hit](tgbot::BotClient&, json) -> net::awaitable<void> {
             hit = "menu:sub:";
@@ -153,11 +144,11 @@ void testCallbackPrefix() {
         });
 
     runDispatch(dispatcher, bot, makeCallback("menu:sub:x"));
-    CHECK(hit == "menu:sub:");  // 最长前缀优先
+    CHECK(hit == "menu:sub:"); // 最长前缀优先
 
     hit.clear();
     runDispatch(dispatcher, bot, makeCallback("other"));
-    CHECK(hit.empty());  // 没有匹配不应触发任何 handler
+    CHECK(hit.empty()); // 没有匹配不应触发任何 handler
 }
 
 std::vector<std::chrono::steady_clock::time_point> runBurst(
@@ -217,7 +208,7 @@ void testPermanentErrorClassifier() {
     CHECK(tgbot::isPermanentError(401));
     CHECK(tgbot::isPermanentError(403));
     CHECK(tgbot::isPermanentError(404));
-    CHECK(!tgbot::isPermanentError(409));  // 冲突是"可恢复"的
+    CHECK(!tgbot::isPermanentError(409)); // 冲突是"可恢复"的
     CHECK(!tgbot::isPermanentError(429));
     CHECK(!tgbot::isPermanentError(500));
 }
@@ -272,8 +263,7 @@ void testRichText() {
 
     CHECK(tgbot::parseModeName(tgbot::ParseMode::kNone) == nullptr);
     CHECK(std::string{tgbot::parseModeName(tgbot::ParseMode::kHtml)} == "HTML");
-    CHECK(std::string{tgbot::parseModeName(tgbot::ParseMode::kMarkdownV2)} ==
-          "MarkdownV2");
+    CHECK(std::string{tgbot::parseModeName(tgbot::ParseMode::kMarkdownV2)} == "MarkdownV2");
 
     // 纯文本分块：长度不超限、除空白外内容不丢
     std::string longText;
@@ -298,8 +288,7 @@ void testRichText() {
         html += "加粗内容";
     }
     html += "</b>";
-    const auto htmlParts =
-        tgbot::splitMessage(html, 120, tgbot::ParseMode::kHtml);
+    const auto htmlParts = tgbot::splitMessage(html, 120, tgbot::ParseMode::kHtml);
     CHECK(htmlParts.size() > 1);
     for (const auto& p : htmlParts) {
         const auto opens = std::count(p.begin(), p.end(), '<');
@@ -310,7 +299,6 @@ void testRichText() {
     }
 }
 
-
 void testLotteryPanel() {
     std::printf("test: lottery panel state machine\n");
 
@@ -318,7 +306,7 @@ void testLotteryPanel() {
     cfg.creatorId = 1;
     cfg.winnerCount = 1;
     cfg.duration = std::chrono::seconds{60};
-    cfg.rewardPrivate = true;  // 这个用例专门验证"私密发码"分支
+    cfg.rewardPrivate = true; // 这个用例专门验证"私密发码"分支
     tgbot::LotteryPanel panel(cfg);
 
     tgbot::PanelEvent join;
@@ -327,12 +315,12 @@ void testLotteryPanel() {
     join.userName = "@alice";
 
     tgbot::PanelEffects fx;
-    CHECK(panel.onClick(join, fx));            // 首次参与 → 需要刷新
+    CHECK(panel.onClick(join, fx)); // 首次参与 → 需要刷新
     CHECK(panel.participantCount() == 1);
     CHECK(!fx.answer.empty());
 
     fx = {};
-    CHECK(!panel.onClick(join, fx));           // 重复参与 → 不刷新
+    CHECK(!panel.onClick(join, fx)); // 重复参与 → 不刷新
     CHECK(panel.participantCount() == 1);
 
     auto join2 = join;
@@ -388,7 +376,7 @@ void testLotteryPanel() {
     CHECK(autoFx.privateMessages.size() == 1);
 
     // 默认（rewardPrivate=false）只在群里公布名单，不私下发码
-    tgbot::LotteryPanel::Config plainCfg;  // creatorId=0 → 谁都能开奖
+    tgbot::LotteryPanel::Config plainCfg; // creatorId=0 → 谁都能开奖
     tgbot::LotteryPanel plainPanel(plainCfg);
     tgbot::PanelEffects plainFx;
     CHECK(plainPanel.onClick(join, plainFx));
@@ -405,8 +393,7 @@ void testRedPacketLedger() {
     std::printf("test: red packet ledger (atomic grab + refund once)\n");
 
     auto ledger = std::make_shared<tgbot::RedPacketLedger>(":memory:");
-    const auto id =
-        ledger->create(-100, 1, 10000, 5, std::chrono::seconds{3600});
+    const auto id = ledger->create(-100, 1, 10000, 5, std::chrono::seconds{3600});
 
     auto row = ledger->get(id);
     CHECK(row.has_value());
@@ -420,7 +407,7 @@ void testRedPacketLedger() {
 
     CHECK(ledger->grab(id, 10, "@a", 1000));
     CHECK(ledger->get(id)->remainingCents == 9000);
-    CHECK(!ledger->grab(id, 10, "@a", 1000));  // 同一人重复领
+    CHECK(!ledger->grab(id, 10, "@a", 1000)); // 同一人重复领
     CHECK(ledger->get(id)->remainingCents == 9000);
 
     // 退款权只可能被抢到一次
@@ -446,7 +433,7 @@ void testRedPacketPanel() {
     const auto id = ledger->create(-100, 1, 10000, 5, std::chrono::seconds{3600});
 
     tgbot::RedPacketPanel::Options opts;
-    opts.seed = 12345;  // 固定随机数，可复现
+    opts.seed = 12345; // 固定随机数，可复现
     tgbot::RedPacketPanel panel(ledger, id, opts);
 
     tgbot::PanelEvent ev;
@@ -515,14 +502,14 @@ void testJobQueue() {
     job.runAt = std::chrono::system_clock::now() - std::chrono::seconds{1};
 
     jobs.enqueue(job);
-    jobs.enqueue(job);  // 幂等：同一个 key 不会重复入队
+    jobs.enqueue(job); // 幂等：同一个 key 不会重复入队
     CHECK(jobs.countPending() == 1);
 
     auto claimed = jobs.claimNext();
     CHECK(claimed.has_value());
     CHECK(claimed->key == "refund:1");
     CHECK(claimed->attempts == 1);
-    CHECK(!jobs.claimNext().has_value());  // 已被领走，不会重复领
+    CHECK(!jobs.claimNext().has_value()); // 已被领走，不会重复领
 
     // 失败后退避：短期内领不到
     jobs.markRetry(claimed->id, "boom");
@@ -561,10 +548,10 @@ void testAmount() {
     CHECK(remainder == 1);
 
     // 分 → 链上单位
-    const auto ethWei = tgbot::Amount::fromCents(100, 18);  // ¥1.00
+    const auto ethWei = tgbot::Amount::fromCents(100, 18); // ¥1.00
     CHECK(ethWei.has_value());
     CHECK(ethWei->toString() == "1000000000000000000");
-    const auto usdt = tgbot::Amount::fromCents(100, 6);  // ¥1.00
+    const auto usdt = tgbot::Amount::fromCents(100, 6); // ¥1.00
     CHECK(usdt.has_value());
     CHECK(usdt->toString() == "1000000");
 
@@ -573,8 +560,7 @@ void testAmount() {
     CHECK(!tgbot::Amount::parse("12a").has_value());
     CHECK(!tgbot::Amount::fromCents(100, 1).has_value());
     // 2^128 正好溢出
-    CHECK(!tgbot::Amount::parse("340282366920938463463374607431768211456")
-               .has_value());
+    CHECK(!tgbot::Amount::parse("340282366920938463463374607431768211456").has_value());
 
     CHECK(*oneEth < *big);
     CHECK(*oneEth != *big);
@@ -589,19 +575,18 @@ void testBatchRefund() {
     const auto a = ledger->create(-100, 1, 5000, 2, std::chrono::seconds{0});
     const auto b = ledger->create(-100, 2, 3000, 2, std::chrono::seconds{0});
     const auto c = ledger->create(-100, 3, 1000, 2, std::chrono::seconds{0});
-    CHECK(ledger->grab(a, 10, "@x", 1000));  // a 被抢走一部分
+    CHECK(ledger->grab(a, 10, "@x", 1000)); // a 被抢走一部分
 
     tgbot::ChainMonitor monitor;
-    tgbot::RefundService service(*ledger, monitor,
-                                 tgbot::RefundService::Options{});
+    tgbot::RefundService service(*ledger, monitor, tgbot::RefundService::Options{});
     int calls = 0;
     std::vector<std::int64_t> seen;
     std::size_t flushed = 0;
     tgbot::Amount total;
 
     const tgbot::BatchRefundHandler handler =
-        [&](const tgbot::RefundBatch& batch, tgbot::TxRefRecorder)
-        -> boost::asio::awaitable<tgbot::RefundBatchResult> {
+        [&](const tgbot::RefundBatch& batch,
+            tgbot::TxRefRecorder) -> boost::asio::awaitable<tgbot::RefundBatchResult> {
         ++calls;
         total = batch.total();
         for (const auto& item : batch.items) {
@@ -615,13 +600,11 @@ void testBatchRefund() {
     boost::asio::io_context io;
     boost::asio::co_spawn(
         io,
-        [&]() -> boost::asio::awaitable<void> {
-            flushed = co_await service.flush(handler);
-        },
+        [&]() -> boost::asio::awaitable<void> { flushed = co_await service.flush(handler); },
         boost::asio::detached);
     io.run();
 
-    CHECK(calls == 1);  // 三个红包合并成一次
+    CHECK(calls == 1); // 三个红包合并成一次
     CHECK(flushed == 3);
     CHECK(seen.size() == 3);
     CHECK(ledger->get(a)->state == "refunded");
@@ -636,9 +619,7 @@ void testBatchRefund() {
     boost::asio::io_context io2;
     boost::asio::co_spawn(
         io2,
-        [&]() -> boost::asio::awaitable<void> {
-            flushed = co_await service.flush(handler);
-        },
+        [&]() -> boost::asio::awaitable<void> { flushed = co_await service.flush(handler); },
         boost::asio::detached);
     io2.run();
     CHECK(calls == 0);
@@ -648,8 +629,8 @@ void testBatchRefund() {
     const auto d = ledger->create(-100, 4, 2000, 2, std::chrono::seconds{0});
     const auto e = ledger->create(-100, 5, 2000, 2, std::chrono::seconds{0});
     const tgbot::BatchRefundHandler failing =
-        [&](const tgbot::RefundBatch& batch, tgbot::TxRefRecorder)
-        -> boost::asio::awaitable<tgbot::RefundBatchResult> {
+        [&](const tgbot::RefundBatch& batch,
+            tgbot::TxRefRecorder) -> boost::asio::awaitable<tgbot::RefundBatchResult> {
         (void)batch;
         tgbot::RefundBatchResult result;
         result.ref = "tx-partial";
@@ -659,9 +640,7 @@ void testBatchRefund() {
     boost::asio::io_context io3;
     boost::asio::co_spawn(
         io3,
-        [&]() -> boost::asio::awaitable<void> {
-            co_await service.flush(failing);
-        },
+        [&]() -> boost::asio::awaitable<void> { co_await service.flush(failing); },
         boost::asio::detached);
     io3.run();
     CHECK(ledger->get(d)->state == "refunded");
@@ -670,9 +649,7 @@ void testBatchRefund() {
     boost::asio::io_context io4;
     boost::asio::co_spawn(
         io4,
-        [&]() -> boost::asio::awaitable<void> {
-            co_await service.flush(handler);
-        },
+        [&]() -> boost::asio::awaitable<void> { co_await service.flush(handler); },
         boost::asio::detached);
     io4.run();
     CHECK(ledger->get(e)->state == "refunded");
@@ -687,14 +664,14 @@ void testChainMonitor() {
     for (int i = 0; i < 4; ++i) {
         monitor.recordFailure("rpc timeout");
     }
-    CHECK(!monitor.paused());  // 还没到阈值
+    CHECK(!monitor.paused()); // 还没到阈值
     CHECK(monitor.consecutiveFailures() == 4);
 
-    monitor.recordFailure("rpc timeout");  // 第 5 次触发熔断
+    monitor.recordFailure("rpc timeout"); // 第 5 次触发熔断
     CHECK(monitor.paused());
     CHECK(monitor.lastError() == "rpc timeout");
 
-    monitor.recordSuccess();  // 恢复
+    monitor.recordSuccess(); // 恢复
     CHECK(!monitor.paused());
     CHECK(monitor.consecutiveFailures() == 0);
 }
@@ -706,7 +683,7 @@ void testReconciler() {
     tgbot::ChainMonitor monitor;
     tgbot::Reconciler::Options options;
     options.minAge = std::chrono::seconds{0};
-    options.stuckAfterSeconds = 0;  // 立即视为超时
+    options.stuckAfterSeconds = 0; // 立即视为超时
     tgbot::Reconciler reconciler(*ledger, monitor, options);
 
     // a: 链上已成功 → 应该标记 refunded
@@ -738,9 +715,7 @@ void testReconciler() {
     boost::asio::io_context io;
     boost::asio::co_spawn(
         io,
-        [&]() -> boost::asio::awaitable<void> {
-            report = co_await reconciler.run(probe, {});
-        },
+        [&]() -> boost::asio::awaitable<void> { report = co_await reconciler.run(probe, {}); },
         boost::asio::detached);
     io.run();
 
@@ -812,8 +787,8 @@ void testGrabRunner() {
         result.fromNetwork = true;
         co_return result;
     };
-    const auto render = [&](std::vector<tgbot::GrabResult> results)
-        -> boost::asio::awaitable<void> {
+    const auto render =
+        [&](std::vector<tgbot::GrabResult> results) -> boost::asio::awaitable<void> {
         for (const auto& result : results) {
             renderedSeq.push_back(result.seq);
             CHECK(result.ok);
@@ -839,9 +814,9 @@ void testGrabRunner() {
     }
     // 并发不超过配置上限
     CHECK(maxInFlight <= 5);
-    CHECK(maxInFlight >= 2);  // 确实并发了
+    CHECK(maxInFlight >= 2); // 确实并发了
 }
-}  // namespace
+} // namespace
 
 int main() {
     std::setvbuf(stdout, nullptr, _IONBF, 0);

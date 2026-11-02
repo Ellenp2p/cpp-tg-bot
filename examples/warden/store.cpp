@@ -16,8 +16,7 @@ class Stmt {
 public:
     Stmt(sqlite3* db, const char* sql) : db_(db) {
         if (sqlite3_prepare_v2(db, sql, -1, &stmt_, nullptr) != SQLITE_OK) {
-            throw std::runtime_error(std::string{"sqlite prepare failed: "} +
-                                     sqlite3_errmsg(db));
+            throw std::runtime_error(std::string{"sqlite prepare failed: "} + sqlite3_errmsg(db));
         }
     }
     ~Stmt() {
@@ -28,30 +27,23 @@ public:
     Stmt(const Stmt&) = delete;
     Stmt& operator=(const Stmt&) = delete;
 
-    void bind(int index, std::int64_t value) {
-        sqlite3_bind_int64(stmt_, index, value);
-    }
+    void bind(int index, std::int64_t value) { sqlite3_bind_int64(stmt_, index, value); }
     void bind(int index, std::string_view value) {
-        sqlite3_bind_text(stmt_, index, value.data(),
-                          static_cast<int>(value.size()), SQLITE_TRANSIENT);
+        sqlite3_bind_text(
+            stmt_, index, value.data(), static_cast<int>(value.size()), SQLITE_TRANSIENT);
     }
-    void bind(int index, bool value) {
-        sqlite3_bind_int(stmt_, index, value ? 1 : 0);
-    }
+    void bind(int index, bool value) { sqlite3_bind_int(stmt_, index, value ? 1 : 0); }
     bool row() { return sqlite3_step(stmt_) == SQLITE_ROW; }
     void run() {
         if (sqlite3_step(stmt_) != SQLITE_DONE) {
-            throw std::runtime_error(std::string{"sqlite step failed: "} +
-                                     sqlite3_errmsg(db_));
+            throw std::runtime_error(std::string{"sqlite step failed: "} + sqlite3_errmsg(db_));
         }
     }
     std::int64_t i64(int index) { return sqlite3_column_int64(stmt_, index); }
     bool boolean(int index) { return sqlite3_column_int(stmt_, index) != 0; }
     std::string text(int index) {
         const auto* p = sqlite3_column_text(stmt_, index);
-        return p == nullptr
-                   ? std::string{}
-                   : std::string{reinterpret_cast<const char*>(p)};
+        return p == nullptr ? std::string{} : std::string{reinterpret_cast<const char*>(p)};
     }
 
 private:
@@ -84,7 +76,7 @@ ChatRecord readChat(Stmt& stmt) {
     return r;
 }
 
-}  // namespace
+} // namespace
 
 Store::Store(const std::string& path) {
     if (sqlite3_open(path.c_str(), &db_) != SQLITE_OK) {
@@ -136,8 +128,9 @@ Store::Store(const std::string& path) {
         " ON deletions(state, due_at)");
     // 老库迁移：target_user 是后加的，已有库 ALTER 一次；重复列错误忽略
     try {
-        exec("ALTER TABLE deletions ADD COLUMN target_user INTEGER NOT NULL "
-             "DEFAULT 0");
+        exec(
+            "ALTER TABLE deletions ADD COLUMN target_user INTEGER NOT NULL "
+            "DEFAULT 0");
     } catch (const std::exception&) {
         // duplicate column name: 新库/已迁移库
     }
@@ -193,8 +186,7 @@ void Store::exec(const char* sql) const {
     }
 }
 
-void Store::ensureChat(std::int64_t chatId, std::string type,
-                       std::string title, std::int64_t now) {
+void Store::ensureChat(std::int64_t chatId, std::string type, std::string title, std::int64_t now) {
     // 重复见到同一个群时只刷新 last_seen，并把"已退出"标记清掉：
     // 命令/消息能到达就说明机器人现在确实在群里
     Stmt stmt(db_,
@@ -224,7 +216,8 @@ void Store::saveChat(const ChatRecord& r) {
         " type=CASE WHEN excluded.type<>'' THEN excluded.type ELSE chats.type END,"
         " title=CASE WHEN excluded.title<>'' THEN excluded.title ELSE chats.title END,"
         " username=CASE WHEN excluded.username<>'' THEN excluded.username ELSE chats.username END,"
-        " bot_status=CASE WHEN excluded.bot_status<>'' THEN excluded.bot_status ELSE chats.bot_status END,"
+        " bot_status=CASE WHEN excluded.bot_status<>'' THEN excluded.bot_status ELSE "
+        "chats.bot_status END,"
         " can_delete=excluded.can_delete,"
         " can_restrict=excluded.can_restrict,"
         " can_pin=excluded.can_pin,"
@@ -251,17 +244,14 @@ void Store::saveChat(const ChatRecord& r) {
     stmt.bind(14, r.lastSeenAt);
     stmt.bind(15, r.refreshedAt);
     stmt.run();
-    if (const auto it = settingsCache_.find(r.chatId);
-        it != settingsCache_.end()) {
+    if (const auto it = settingsCache_.find(r.chatId); it != settingsCache_.end()) {
         settingsLru_.erase(it->second.lruPos);
         settingsCache_.erase(it);
     }
 }
 
 std::optional<ChatRecord> Store::chat(std::int64_t chatId) {
-    Stmt stmt(db_, (std::string{"SELECT "} + kChatColumns +
-                    " FROM chats WHERE chat_id=?")
-                       .c_str());
+    Stmt stmt(db_, (std::string{"SELECT "} + kChatColumns + " FROM chats WHERE chat_id=?").c_str());
     stmt.bind(1, chatId);
     if (!stmt.row()) {
         return std::nullopt;
@@ -269,12 +259,10 @@ std::optional<ChatRecord> Store::chat(std::int64_t chatId) {
     return readChat(stmt);
 }
 
-std::vector<ChatRecord> Store::listChats(int limit, int offset,
-                                         bool onlyActive) {
-    const std::string sql =
-        std::string{"SELECT "} + kChatColumns + " FROM chats" +
-        (onlyActive ? " WHERE left_at=0" : "") +
-        " ORDER BY last_seen_at DESC, chat_id DESC LIMIT ? OFFSET ?";
+std::vector<ChatRecord> Store::listChats(int limit, int offset, bool onlyActive) {
+    const std::string sql = std::string{"SELECT "} + kChatColumns + " FROM chats" +
+                            (onlyActive ? " WHERE left_at=0" : "") +
+                            " ORDER BY last_seen_at DESC, chat_id DESC LIMIT ? OFFSET ?";
     Stmt stmt(db_, sql.c_str());
     stmt.bind(1, static_cast<std::int64_t>(limit));
     stmt.bind(2, static_cast<std::int64_t>(offset));
@@ -286,8 +274,9 @@ std::vector<ChatRecord> Store::listChats(int limit, int offset,
 }
 
 int Store::countChats(bool onlyActive) {
-    Stmt stmt(db_, onlyActive ? "SELECT COUNT(*) FROM chats WHERE left_at=0"
-                              : "SELECT COUNT(*) FROM chats");
+    Stmt stmt(
+        db_,
+        onlyActive ? "SELECT COUNT(*) FROM chats WHERE left_at=0" : "SELECT COUNT(*) FROM chats");
     return stmt.row() ? static_cast<int>(stmt.i64(0)) : 0;
 }
 
@@ -322,8 +311,7 @@ void Store::markLeft(std::int64_t chatId, std::int64_t now) {
     stmt.bind(1, now);
     stmt.bind(2, chatId);
     stmt.run();
-    if (const auto it = settingsCache_.find(chatId);
-        it != settingsCache_.end()) {
+    if (const auto it = settingsCache_.find(chatId); it != settingsCache_.end()) {
         settingsLru_.erase(it->second.lruPos);
         settingsCache_.erase(it);
     }
@@ -345,10 +333,8 @@ void Store::touch(std::int64_t chatId, std::int64_t now) {
 }
 
 std::shared_ptr<ChatSettings> Store::loadSettings(std::int64_t chatId) {
-    if (const auto cached = settingsCache_.find(chatId);
-        cached != settingsCache_.end()) {
-        settingsLru_.splice(settingsLru_.begin(), settingsLru_,
-                            cached->second.lruPos);
+    if (const auto cached = settingsCache_.find(chatId); cached != settingsCache_.end()) {
+        settingsLru_.splice(settingsLru_.begin(), settingsLru_, cached->second.lruPos);
         return cached->second.value;
     }
 
@@ -418,19 +404,21 @@ void Store::maintenance(std::int64_t now) {
     }
 }
 
-void Store::addDeletion(std::int64_t chatId, std::int64_t messageId,
-                        std::string kind, std::int64_t dueAt,
-                        std::int64_t now, std::int64_t targetUserId) {
-    Stmt stmt(
-        db_,
-        "INSERT INTO deletions("
-        "chat_id,message_id,target_user,kind,due_at,attempts,state,"
-        "last_error,created_at)"
-        " VALUES(?,?,?,?,?,0,'pending','',?)"
-        " ON CONFLICT(chat_id,message_id) DO UPDATE SET"
-        " target_user=excluded.target_user, kind=excluded.kind,"
-        " due_at=excluded.due_at, state='pending', attempts=0,"
-        " last_error=''");
+void Store::addDeletion(std::int64_t chatId,
+                        std::int64_t messageId,
+                        std::string kind,
+                        std::int64_t dueAt,
+                        std::int64_t now,
+                        std::int64_t targetUserId) {
+    Stmt stmt(db_,
+              "INSERT INTO deletions("
+              "chat_id,message_id,target_user,kind,due_at,attempts,state,"
+              "last_error,created_at)"
+              " VALUES(?,?,?,?,?,0,'pending','',?)"
+              " ON CONFLICT(chat_id,message_id) DO UPDATE SET"
+              " target_user=excluded.target_user, kind=excluded.kind,"
+              " due_at=excluded.due_at, state='pending', attempts=0,"
+              " last_error=''");
     stmt.bind(1, chatId);
     stmt.bind(2, messageId);
     stmt.bind(3, targetUserId);
@@ -476,8 +464,10 @@ std::optional<DeletionJob> Store::claimDeletion(std::int64_t now) {
     return job;
 }
 
-void Store::finishDeletion(std::int64_t chatId, std::int64_t messageId,
-                           bool ok, std::string_view error) {
+void Store::finishDeletion(std::int64_t chatId,
+                           std::int64_t messageId,
+                           bool ok,
+                           std::string_view error) {
     // 只允许 inflight → done/failed：任务被 /autodel off 取消后，
     // 迟到的 worker 不能把已删除的行重新标成完成/失败
     Stmt stmt(db_,
@@ -492,8 +482,10 @@ void Store::finishDeletion(std::int64_t chatId, std::int64_t messageId,
     stmt.run();
 }
 
-void Store::retryDeletion(std::int64_t chatId, std::int64_t messageId,
-                          std::int64_t nextDue, std::string_view error) {
+void Store::retryDeletion(std::int64_t chatId,
+                          std::int64_t messageId,
+                          std::int64_t nextDue,
+                          std::string_view error) {
     Stmt stmt(db_,
               "UPDATE deletions SET state='pending', due_at=?,"
               " attempts=attempts+1, last_error=?"
@@ -525,8 +517,7 @@ void Store::cancelKindDeletions(std::int64_t chatId, std::string_view kind) {
     stmt.run();
 }
 
-void Store::cancelMessageDeletion(std::int64_t chatId,
-                                  std::int64_t messageId) {
+void Store::cancelMessageDeletion(std::int64_t chatId, std::int64_t messageId) {
     Stmt stmt(db_,
               "DELETE FROM deletions WHERE chat_id=? AND message_id=?"
               " AND state IN ('pending','inflight')");
@@ -594,8 +585,7 @@ void Store::purgeOldPinnedMessages(std::int64_t before) {
     stmt.run();
 }
 
-void Store::markPinned(std::int64_t chatId, std::int64_t messageId,
-                       std::int64_t now) {
+void Store::markPinned(std::int64_t chatId, std::int64_t messageId, std::int64_t now) {
     Stmt stmt(db_,
               "INSERT OR REPLACE INTO pinned_messages"
               "(chat_id,message_id,pinned_at) VALUES(?,?,?)");
@@ -638,8 +628,10 @@ void Store::replaceAdmins(std::int64_t chatId,
     exec("COMMIT");
 }
 
-void Store::addAdmin(std::int64_t chatId, std::int64_t userId,
-                     std::string_view status, std::string_view displayName,
+void Store::addAdmin(std::int64_t chatId,
+                     std::int64_t userId,
+                     std::string_view status,
+                     std::string_view displayName,
                      std::int64_t now) {
     Stmt stmt(db_,
               "INSERT INTO chat_admins"
@@ -680,8 +672,10 @@ bool Store::isChatAdmin(std::int64_t chatId, std::int64_t userId) {
     return stmt.row();
 }
 
-void Store::audit(std::int64_t chatId, std::int64_t actorId,
-                  std::string_view action, std::string_view detail) {
+void Store::audit(std::int64_t chatId,
+                  std::int64_t actorId,
+                  std::string_view action,
+                  std::string_view detail) {
     Stmt stmt(db_,
               "INSERT INTO audit_log(ts,chat_id,actor_id,action,detail)"
               " VALUES(?,?,?,?,?)");
@@ -710,5 +704,4 @@ void Store::checkpoint() {
     }
 }
 
-}  // namespace warden
-
+} // namespace warden

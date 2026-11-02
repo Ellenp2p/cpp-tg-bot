@@ -8,8 +8,8 @@
 #include <boost/beast/http.hpp>
 #include <boost/system/system_error.hpp>
 
-#include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
+#include <nlohmann/json.hpp>
 
 #include <chrono>
 #include <exception>
@@ -24,8 +24,10 @@ namespace beast = boost::beast;
 namespace http = beast::http;
 using nlohmann::json;
 
-HealthServer::HealthServer(Store& store, std::atomic<bool>& draining,
-                           std::string instanceId, std::string version,
+HealthServer::HealthServer(Store& store,
+                           std::atomic<bool>& draining,
+                           std::string instanceId,
+                           std::string version,
                            std::string controlToken)
     : store_(store),
       draining_(draining),
@@ -35,7 +37,8 @@ HealthServer::HealthServer(Store& store, std::atomic<bool>& draining,
       startedAt_(std::chrono::steady_clock::now()) {}
 
 void HealthServer::start(const net::any_io_executor& executor,
-                         const std::string& host, unsigned short port) {
+                         const std::string& host,
+                         unsigned short port) {
     const net::ip::tcp::endpoint endpoint{net::ip::make_address(host), port};
     auto acceptor = std::make_shared<net::ip::tcp::acceptor>(executor);
     acceptor->open(endpoint.protocol());
@@ -47,14 +50,11 @@ void HealthServer::start(const net::any_io_executor& executor,
     auto self = shared_from_this();
     net::co_spawn(
         executor,
-        [self, acceptor]() -> net::awaitable<void> {
-            co_await self->acceptLoop(acceptor);
-        },
+        [self, acceptor]() -> net::awaitable<void> { co_await self->acceptLoop(acceptor); },
         net::detached);
 }
 
-net::awaitable<void> HealthServer::acceptLoop(
-    std::shared_ptr<net::ip::tcp::acceptor> acceptor) {
+net::awaitable<void> HealthServer::acceptLoop(std::shared_ptr<net::ip::tcp::acceptor> acceptor) {
     const auto executor = co_await net::this_coro::executor;
     try {
         while (true) {
@@ -62,8 +62,7 @@ net::awaitable<void> HealthServer::acceptLoop(
             auto self = shared_from_this();
             net::co_spawn(
                 executor,
-                [self, sock = std::move(socket)]() mutable
-                    -> net::awaitable<void> {
+                [self, sock = std::move(socket)]() mutable -> net::awaitable<void> {
                     co_await self->session(std::move(sock));
                 },
                 net::detached);
@@ -84,8 +83,7 @@ net::awaitable<void> HealthServer::session(net::ip::tcp::socket socket) {
         beast::flat_buffer buffer;
         http::request_parser<http::string_body> parser;
         parser.body_limit(4096);
-        co_await http::async_read(stream, buffer, parser,
-                                  net::use_awaitable);
+        co_await http::async_read(stream, buffer, parser, net::use_awaitable);
         auto req = parser.release();
 
         http::status status = http::status::ok;
@@ -98,25 +96,21 @@ net::awaitable<void> HealthServer::session(net::ip::tcp::socket socket) {
                         {"draining", draining_.load()},
                         {"pending_deletions", store_.pendingDeletions()}}
                        .dump();
-        } else if (req.method() == http::verb::get &&
-                   req.target() == "/readyz") {
+        } else if (req.method() == http::verb::get && req.target() == "/readyz") {
             const bool ready = !draining_.load();
-            status = ready ? http::status::ok
-                           : http::status::service_unavailable;
+            status = ready ? http::status::ok : http::status::service_unavailable;
             body = json{{"ok", ready},
                         {"instance", instanceId_},
                         {"version", version_},
                         {"draining", draining_.load()},
                         {"pending_deletions", store_.pendingDeletions()}}
                        .dump();
-        } else if (req.method() == http::verb::post &&
-                   req.target() == "/drain") {
+        } else if (req.method() == http::verb::post && req.target() == "/drain") {
             const auto tokenIt = req.find("X-Warden-Token");
             if (controlToken_.empty()) {
                 status = http::status::forbidden;
                 body = R"({"ok":false,"error":"control token not configured"})";
-            } else if (tokenIt == req.end() ||
-                       tokenIt->value() != controlToken_) {
+            } else if (tokenIt == req.end() || tokenIt->value() != controlToken_) {
                 status = http::status::forbidden;
                 body = R"({"ok":false,"error":"bad token"})";
             } else {
@@ -142,8 +136,7 @@ net::awaitable<void> HealthServer::session(net::ip::tcp::socket socket) {
         boost::system::error_code ignored;
         stream.socket().shutdown(net::ip::tcp::socket::shutdown_both, ignored);
     } catch (const boost::system::system_error& e) {
-        if (e.code() != net::error::operation_aborted &&
-            e.code() != http::error::end_of_stream) {
+        if (e.code() != net::error::operation_aborted && e.code() != http::error::end_of_stream) {
             spdlog::debug("health session closed: {}", e.what());
         }
     } catch (const std::exception& e) {
@@ -151,4 +144,4 @@ net::awaitable<void> HealthServer::session(net::ip::tcp::socket socket) {
     }
 }
 
-}  // namespace warden
+} // namespace warden

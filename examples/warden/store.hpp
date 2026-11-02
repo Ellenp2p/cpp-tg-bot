@@ -31,7 +31,7 @@ struct ChatRecord {
     std::string type;
     std::string title;
     std::string username;
-    std::string botStatus = "unknown";  // creator/administrator/member/left/kicked
+    std::string botStatus = "unknown"; // creator/administrator/member/left/kicked
     bool canDelete = false;
     bool canRestrict = false;
     bool canPin = false;
@@ -44,9 +44,7 @@ struct ChatRecord {
     std::int64_t refreshedAt = 0;
 
     bool active() const { return leftAt == 0; }
-    bool isAdmin() const {
-        return botStatus == "creator" || botStatus == "administrator";
-    }
+    bool isAdmin() const { return botStatus == "creator" || botStatus == "administrator"; }
 };
 
 struct DeletionJob {
@@ -61,7 +59,7 @@ struct DeletionJob {
 
 struct AdminRow {
     std::int64_t userId = 0;
-    std::string status;  // creator / administrator
+    std::string status; // creator / administrator
     std::string displayName;
 };
 
@@ -80,8 +78,7 @@ public:
 
     // ---- 群登记 ----
     // 只插入不覆盖（消息里第一次见到某个群时用）
-    void ensureChat(std::int64_t chatId, std::string type, std::string title,
-                    std::int64_t now);
+    void ensureChat(std::int64_t chatId, std::string type, std::string title, std::int64_t now);
     // 全量更新（my_chat_member / 刷新权限后）。空字符串不会覆盖已有值。
     void saveChat(const ChatRecord& record);
     std::optional<ChatRecord> chat(std::int64_t chatId);
@@ -107,14 +104,21 @@ public:
 
     // ---- 删除任务 ----
     // 同一 (chat,message) 重复排程会更新到期时间而不是插两条
-    void addDeletion(std::int64_t chatId, std::int64_t messageId,
-                     std::string kind, std::int64_t dueAt, std::int64_t now,
+    void addDeletion(std::int64_t chatId,
+                     std::int64_t messageId,
+                     std::string kind,
+                     std::int64_t dueAt,
+                     std::int64_t now,
                      std::int64_t targetUserId = 0);
     std::optional<DeletionJob> claimDeletion(std::int64_t now);
-    void finishDeletion(std::int64_t chatId, std::int64_t messageId,
-                        bool ok, std::string_view error);
-    void retryDeletion(std::int64_t chatId, std::int64_t messageId,
-                       std::int64_t nextDue, std::string_view error);
+    void finishDeletion(std::int64_t chatId,
+                        std::int64_t messageId,
+                        bool ok,
+                        std::string_view error);
+    void retryDeletion(std::int64_t chatId,
+                       std::int64_t messageId,
+                       std::int64_t nextDue,
+                       std::string_view error);
     void cancelChatDeletions(std::int64_t chatId);
     void cancelKindDeletions(std::int64_t chatId, std::string_view kind);
     void cancelMessageDeletion(std::int64_t chatId, std::int64_t messageId);
@@ -132,24 +136,26 @@ public:
     // ---- 置顶消息 ----
     // 置顶过的消息永不自动删除（保守策略：即使后来取消置顶也不补删，
     // 避免"置顶/取消置顶"与定时器竞争导致误删）。
-    void markPinned(std::int64_t chatId, std::int64_t messageId,
-                    std::int64_t now);
+    void markPinned(std::int64_t chatId, std::int64_t messageId, std::int64_t now);
     bool isPinned(std::int64_t chatId, std::int64_t messageId);
 
     // ---- 管理员缓存 ----
-    void replaceAdmins(std::int64_t chatId, const std::vector<AdminRow>& rows,
-                       std::int64_t now);
+    void replaceAdmins(std::int64_t chatId, const std::vector<AdminRow>& rows, std::int64_t now);
     // 单条补充：管理员用命令时顺手把 TA 记进名册，不用整表重拉
-    void addAdmin(std::int64_t chatId, std::int64_t userId,
-                  std::string_view status, std::string_view displayName,
+    void addAdmin(std::int64_t chatId,
+                  std::int64_t userId,
+                  std::string_view status,
+                  std::string_view displayName,
                   std::int64_t now);
     std::vector<ChatRecord> chatsForAdmin(std::int64_t userId);
     // 缓存名册里的群管理员判断（面板回调鉴权用；实时命令仍走 getChatMember）
     bool isChatAdmin(std::int64_t chatId, std::int64_t userId);
 
     // ---- 审计 ----
-    void audit(std::int64_t chatId, std::int64_t actorId,
-               std::string_view action, std::string_view detail);
+    void audit(std::int64_t chatId,
+               std::int64_t actorId,
+               std::string_view action,
+               std::string_view detail);
     std::int64_t lastAuditAt(std::int64_t chatId, std::string_view action);
 
     void checkpoint();
@@ -166,8 +172,8 @@ private:
     };
     static constexpr std::size_t kMaxSettingsCache = 4096;
     std::unordered_map<std::int64_t, SettingsCacheEntry> settingsCache_;
-    std::list<std::int64_t> settingsLru_;  // front = 最近使用
+    std::list<std::int64_t> settingsLru_; // front = 最近使用
     std::unordered_map<std::int64_t, std::int64_t> lastSeenWrite_;
 };
 
-}  // namespace warden
+} // namespace warden
