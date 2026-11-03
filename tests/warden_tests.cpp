@@ -436,6 +436,12 @@ void testIgnoreParser() {
     check(admin.has_value() && admin->kinds == std::vector<std::string>{"sticker"},
           "ignore admin sticker kind");
 
+    const auto cnAdmin = warden::parseIgnoreArgs("管理员 贴纸", false, false, error);
+    check(cnAdmin.has_value() && cnAdmin->scope == warden::IgnoreScope::kAdmin,
+          "ignore Chinese admin scope");
+    check(cnAdmin.has_value() && cnAdmin->kinds == std::vector<std::string>{"sticker"},
+          "ignore Chinese admin kind");
+
     const auto user = warden::parseIgnoreArgs("@Alice photo", false, false, error);
     check(user.has_value() && user->scope == warden::IgnoreScope::kUsername,
           "ignore username scope");

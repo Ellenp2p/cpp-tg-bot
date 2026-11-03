@@ -88,7 +88,9 @@ inline std::optional<IgnoreRequest> parseIgnoreArgs(std::string_view args,
         ++i;
     }
 
-    if (i < tokens.size() && lower(trim(tokens[i])) == "admin") {
+    if (i < tokens.size() &&
+        (lower(trim(tokens[i])) == "admin" || lower(trim(tokens[i])) == "管理员" ||
+         lower(trim(tokens[i])) == "管理員")) {
         req.scope = IgnoreScope::kAdmin;
         ++i;
         bool sawOn = false;
