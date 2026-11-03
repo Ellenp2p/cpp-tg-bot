@@ -24,29 +24,6 @@ inline std::string htmlEscape(std::string_view s) {
     return out;
 }
 
-inline std::string introText(std::string_view botName) {
-    const std::string name = botName.empty() ? "本机器人" : std::string{botName};
-    return "🛡 我是 " + name +
-           "，本群的自动清理管家。\n"
-           "\n"
-           "管理员发 /autodel on 即可启用：贴纸 1 分钟、图片/视频/语音 5 分钟\n"
-           "后自动删除（可逐类改时限，也可关掉某一类）。\n"
-           "\n"
-           "常用命令（管理员）：\n"
-           "• /autodel —— 查看本群设置\n"
-           "• /autodel 贴纸 20秒 —— 贴纸 20 秒后删\n"
-           "• /autodel 图片 开启 1分钟 —— 中文写法\n"
-           "• /autodel 视频 关闭 —— 不再删视频\n"
-           "• /autodel all 10m —— 所有支持的类型统一 10 分钟\n"
-           "• /status —— 检查我的管理员权限\n"
-           "\n"
-           "也可以直接发（不用 /）：\n"
-           "自动删除 贴纸 开启 10秒\n"
-           "自动删除 图片 开启 1分钟\n"
-           "\n"
-           "需要给我「删除消息」管理员权限；回复只发给你。";
-}
-
 inline std::string helpText(std::string_view botName, std::string_view botUsername) {
     // 用 HTML parse_mode 发送，<code> 里的内容在 Telegram 里可以点击复制。
     const std::string title = botName.empty() ? "群务管家" : htmlEscape(botName);
@@ -64,7 +41,24 @@ inline std::string helpText(std::string_view botName, std::string_view botUserna
                     "<code>/autodel reset</code> —— 恢复默认时限\n"
                     "<code>/status</code> —— 我的身份与管理员权限\n"
                     "\n"
-                    "<b>也可以直接发（不用 /）：</b>\n"
+                    "<b>【媒体豁免】</b>\n"
+                    "回复某人的消息后：\n"
+                    "<code>/ignore 贴纸</code> —— 只忽略他的贴纸\n"
+                    "<code>/ignore 贴纸 图片</code> —— 忽略多种类型\n"
+                    "<code>/ignore 全部</code> —— 忽略他的全部媒体\n"
+                    "<code>/restore 贴纸</code> / <code>/restore 全部</code> —— 恢复\n"
+                    "<code>/ignore list</code> —— 查看当前豁免规则\n"
+                    "管理员：<code>/ignore admin on|off</code>，"
+                    "<code>/ignore admin 贴纸 on|off</code>\n"
+                    "\n"
+                    "<b>也可以直接发（不用 /，用户目标要回复消息）：</b>\n"
+                    "<code>忽略 贴纸</code> / <code>忽略 全部</code>\n"
+                    "<code>恢复 贴纸</code> / <code>恢复 全部</code>\n"
+                    "<code>忽略管理员 全部</code> / <code>恢复管理员 全部</code>\n"
+                    "只发“忽略”或“恢复”不会执行；全部媒体必须写“全部”。\n"
+                    "<code>@username</code> 只能按用户名匹配，回复或数字 ID 才精确。\n"
+                    "\n"
+                    "<b>自动清理也可以直接发：</b>\n"
                     "<code>自动删除 贴纸 开启 10秒</code>\n"
                     "<code>自动删除 图片 开启 1分钟</code>\n"
                     "<code>自动删除 视频 关闭</code>\n"

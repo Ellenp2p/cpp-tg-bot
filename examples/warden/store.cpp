@@ -6,6 +6,7 @@
 #include <sqlite3.h>
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <ctime>
 #include <stdexcept>
@@ -14,6 +15,27 @@
 namespace warden {
 
 namespace {
+
+std::string lowerAscii(std::string_view value) {
+    std::string out;
+    out.reserve(value.size());
+    for (const unsigned char c : value) {
+        out.push_back(static_cast<char>(std::tolower(c)));
+    }
+    return out;
+}
+
+std::string exemptionSubjectKey(std::string_view scope,
+                                std::int64_t userId,
+                                std::string_view username) {
+    if (scope == "admin") {
+        return "admin";
+    }
+    if (scope == "user") {
+        return "user:" + std::to_string(userId);
+    }
+    return "username:" + lowerAscii(username);
+}
 
 class Stmt {
 public:
@@ -32,8 +54,12 @@ public:
 
     void bind(int index, std::int64_t value) { sqlite3_bind_int64(stmt_, index, value); }
     void bind(int index, std::string_view value) {
-        sqlite3_bind_text(
-            stmt_, index, value.data(), static_cast<int>(value.size()), SQLITE_TRANSIENT);
+        static constexpr char kEmpty[] = "";
+        sqlite3_bind_text(stmt_,
+                          index,
+                          value.empty() ? kEmpty : value.data(),
+                          static_cast<int>(value.size()),
+                          SQLITE_TRANSIENT);
     }
     void bind(int index, bool value) { sqlite3_bind_int(stmt_, index, value ? 1 : 0); }
     bool row() { return sqlite3_step(stmt_) == SQLITE_ROW; }
@@ -115,6 +141,18 @@ Store::Store(const std::string& path) {
         " PRIMARY KEY(chat_id, kind))");
 
     exec(
+        "CREATE TABLE IF NOT EXISTS media_exemptions("
+        " chat_id INTEGER NOT NULL,"
+        " subject_key TEXT NOT NULL,"
+        " scope TEXT NOT NULL,"
+        " user_id INTEGER NOT NULL DEFAULT 0,"
+        " username TEXT NOT NULL DEFAULT '',"
+        " kind TEXT NOT NULL,"
+        " added_by INTEGER NOT NULL DEFAULT 0,"
+        " added_at INTEGER NOT NULL DEFAULT 0,"
+        " PRIMARY KEY(chat_id,subject_key,kind))");
+
+    exec(
         "CREATE TABLE IF NOT EXISTS deletions("
         " chat_id INTEGER NOT NULL,"
         " message_id INTEGER NOT NULL,"
@@ -133,6 +171,14 @@ Store::Store(const std::string& path) {
     try {
         exec(
             "ALTER TABLE deletions ADD COLUMN target_user INTEGER NOT NULL "
+            "DEFAULT 0");
+    } catch (const std::exception&) {
+        // duplicate column name: 新库/已迁移库
+    }
+    // sender_id 用于“开启豁免时取消这个人已经排队的媒体任务”。
+    try {
+        exec(
+            "ALTER TABLE deletions ADD COLUMN sender_id INTEGER NOT NULL "
             "DEFAULT 0");
     } catch (const std::exception&) {
         // duplicate column name: 新库/已迁移库
@@ -355,6 +401,16 @@ std::shared_ptr<ChatSettings> Store::loadSettings(std::int64_t chatId) {
             s->delays[stmt.text(0)] = static_cast<int>(stmt.i64(1));
         }
     }
+    {
+        Stmt stmt(db_,
+                  "SELECT scope,user_id,username,kind FROM media_exemptions"
+                  " WHERE chat_id=?");
+        stmt.bind(1, chatId);
+        while (stmt.row()) {
+            s->exemptions.push_back(
+                MediaExemption{stmt.text(0), stmt.i64(1), stmt.text(2), stmt.text(3)});
+        }
+    }
 
     settingsLru_.push_front(chatId);
     settingsCache_.emplace(chatId, SettingsCacheEntry{s, settingsLru_.begin()});
@@ -387,8 +443,82 @@ void Store::clearSettings(std::int64_t chatId) {
     Stmt stmt(db_, "DELETE FROM chat_settings WHERE chat_id=?");
     stmt.bind(1, chatId);
     stmt.run();
-    auto s = loadSettings(chatId);
-    s->delays.clear();
+    invalidateSettings(chatId);
+}
+
+void Store::invalidateSettings(std::int64_t chatId) {
+    const auto it = settingsCache_.find(chatId);
+    if (it == settingsCache_.end()) {
+        return;
+    }
+    settingsLru_.erase(it->second.lruPos);
+    settingsCache_.erase(it);
+}
+
+void Store::addExemption(std::int64_t chatId,
+                         std::string_view scope,
+                         std::int64_t userId,
+                         std::string_view username,
+                         std::string_view kind,
+                         std::int64_t actorId,
+                         std::int64_t now) {
+    if (kind.empty()) {
+        return;
+    }
+    Stmt stmt(db_,
+              "INSERT INTO media_exemptions("
+              "chat_id,subject_key,scope,user_id,username,kind,added_by,added_at)"
+              " VALUES(?,?,?,?,?,?,?,?)"
+              " ON CONFLICT(chat_id,subject_key,kind) DO UPDATE SET"
+              " scope=excluded.scope, user_id=excluded.user_id,"
+              " username=excluded.username, added_by=excluded.added_by,"
+              " added_at=excluded.added_at");
+    stmt.bind(1, chatId);
+    stmt.bind(2, exemptionSubjectKey(scope, userId, username));
+    stmt.bind(3, scope);
+    stmt.bind(4, userId);
+    stmt.bind(5, username);
+    stmt.bind(6, kind);
+    stmt.bind(7, actorId);
+    stmt.bind(8, now);
+    stmt.run();
+    invalidateSettings(chatId);
+}
+
+void Store::removeExemption(std::int64_t chatId,
+                            std::string_view scope,
+                            std::int64_t userId,
+                            std::string_view username,
+                            std::string_view kind) {
+    if (kind.empty()) {
+        Stmt stmt(db_,
+                  "DELETE FROM media_exemptions"
+                  " WHERE chat_id=? AND subject_key=?");
+        stmt.bind(1, chatId);
+        stmt.bind(2, exemptionSubjectKey(scope, userId, username));
+        stmt.run();
+    } else {
+        Stmt stmt(db_,
+                  "DELETE FROM media_exemptions"
+                  " WHERE chat_id=? AND subject_key=? AND kind=?");
+        stmt.bind(1, chatId);
+        stmt.bind(2, exemptionSubjectKey(scope, userId, username));
+        stmt.bind(3, kind);
+        stmt.run();
+    }
+    invalidateSettings(chatId);
+}
+
+std::vector<std::int64_t> Store::adminIds(std::int64_t chatId) {
+    std::vector<std::int64_t> ids;
+    Stmt stmt(db_,
+              "SELECT user_id FROM chat_admins"
+              " WHERE chat_id=? AND status IN ('creator','administrator')");
+    stmt.bind(1, chatId);
+    while (stmt.row()) {
+        ids.push_back(stmt.i64(0));
+    }
+    return ids;
 }
 
 void Store::maintenance(std::int64_t now) {
@@ -422,23 +552,25 @@ void Store::addDeletion(std::int64_t chatId,
                         std::string kind,
                         std::int64_t dueAt,
                         std::int64_t now,
-                        std::int64_t targetUserId) {
+                        std::int64_t targetUserId,
+                        std::int64_t senderId) {
     DbMetricTimer metric{"add"};
     Stmt stmt(db_,
               "INSERT INTO deletions("
-              "chat_id,message_id,target_user,kind,due_at,attempts,state,"
+              "chat_id,message_id,target_user,sender_id,kind,due_at,attempts,state,"
               "last_error,created_at)"
-              " VALUES(?,?,?,?,?,0,'pending','',?)"
+              " VALUES(?,?,?,?,?,?,0,'pending','',?)"
               " ON CONFLICT(chat_id,message_id) DO UPDATE SET"
-              " target_user=excluded.target_user, kind=excluded.kind,"
-              " due_at=excluded.due_at, state='pending', attempts=0,"
-              " last_error=''");
+              " target_user=excluded.target_user, sender_id=excluded.sender_id,"
+              " kind=excluded.kind, due_at=excluded.due_at, state='pending',"
+              " attempts=0, last_error=''");
     stmt.bind(1, chatId);
     stmt.bind(2, messageId);
     stmt.bind(3, targetUserId);
-    stmt.bind(4, kind);
-    stmt.bind(5, dueAt);
-    stmt.bind(6, now);
+    stmt.bind(4, senderId);
+    stmt.bind(5, kind);
+    stmt.bind(6, dueAt);
+    stmt.bind(7, now);
     stmt.run();
 }
 
@@ -541,6 +673,31 @@ void Store::cancelMessageDeletion(std::int64_t chatId, std::int64_t messageId) {
     stmt.bind(1, chatId);
     stmt.bind(2, messageId);
     stmt.run();
+}
+
+void Store::cancelPendingBySender(std::int64_t chatId,
+                                  std::int64_t senderId,
+                                  std::string_view kind) {
+    if (senderId == 0) {
+        return;
+    }
+    if (kind.empty()) {
+        Stmt stmt(db_,
+                  "DELETE FROM deletions WHERE chat_id=? AND sender_id=?"
+                  " AND state IN ('pending','inflight')"
+                  " AND kind NOT IN ('ephemeral','bot_reply','command')");
+        stmt.bind(1, chatId);
+        stmt.bind(2, senderId);
+        stmt.run();
+    } else {
+        Stmt stmt(db_,
+                  "DELETE FROM deletions WHERE chat_id=? AND sender_id=?"
+                  " AND kind=? AND state IN ('pending','inflight')");
+        stmt.bind(1, chatId);
+        stmt.bind(2, senderId);
+        stmt.bind(3, kind);
+        stmt.run();
+    }
 }
 
 int Store::pendingDeletions() {

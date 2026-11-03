@@ -63,10 +63,18 @@ struct AdminRow {
     std::string displayName;
 };
 
+struct MediaExemption {
+    std::string scope; // admin / user / username
+    std::int64_t userId = 0;
+    std::string username;
+    std::string kind; // sticker / photo / ...（每类一行）
+};
+
 // 群设置（带内存缓存；delays 里没有的 kind 走 kindDefaultDelay）
 struct ChatSettings {
     bool enabled = false;
     std::map<std::string, int, std::less<>> delays;
+    std::vector<MediaExemption> exemptions;
 };
 
 class Store {
@@ -102,6 +110,23 @@ public:
     void setDelay(std::int64_t chatId, std::string_view kind, int seconds);
     void clearSettings(std::int64_t chatId);
 
+    // ---- 媒体豁免 ----
+    // kind 必填；调用方负责把“全部”展开为 kMediaKinds。
+    void addExemption(std::int64_t chatId,
+                      std::string_view scope,
+                      std::int64_t userId,
+                      std::string_view username,
+                      std::string_view kind,
+                      std::int64_t actorId,
+                      std::int64_t now);
+    // kind 为空 = 删除该 subject 的所有类型
+    void removeExemption(std::int64_t chatId,
+                         std::string_view scope,
+                         std::int64_t userId,
+                         std::string_view username,
+                         std::string_view kind = {});
+    std::vector<std::int64_t> adminIds(std::int64_t chatId);
+
     // ---- 删除任务 ----
     // 同一 (chat,message) 重复排程会更新到期时间而不是插两条
     void addDeletion(std::int64_t chatId,
@@ -109,7 +134,8 @@ public:
                      std::string kind,
                      std::int64_t dueAt,
                      std::int64_t now,
-                     std::int64_t targetUserId = 0);
+                     std::int64_t targetUserId = 0,
+                     std::int64_t senderId = 0);
     std::optional<DeletionJob> claimDeletion(std::int64_t now);
     void finishDeletion(std::int64_t chatId,
                         std::int64_t messageId,
@@ -122,6 +148,10 @@ public:
     void cancelChatDeletions(std::int64_t chatId);
     void cancelKindDeletions(std::int64_t chatId, std::string_view kind);
     void cancelMessageDeletion(std::int64_t chatId, std::int64_t messageId);
+    // 取消某个发送者的待删任务；kind 为空 = 所有媒体类型
+    void cancelPendingBySender(std::int64_t chatId,
+                               std::int64_t senderId,
+                               std::string_view kind = {});
     int pendingDeletions();
     int pendingDeletionsFor(std::int64_t chatId);
     // 有未完成删除任务的群（启动时做置顶补扫用，去重）
@@ -162,6 +192,7 @@ public:
 
 private:
     void exec(const char* sql) const;
+    void invalidateSettings(std::int64_t chatId);
 
     std::shared_ptr<ChatSettings> loadSettings(std::int64_t chatId);
 

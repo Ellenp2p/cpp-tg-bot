@@ -5,7 +5,9 @@
 #include "../src/chat_dispatch_util.hpp"
 #include "commands.hpp"
 #include "delete_result.hpp"
+#include "exemptions.hpp"
 #include "health.hpp"
+#include "ignore.hpp"
 #include "media.hpp"
 #include "store.hpp"
 #include "warden_texts.hpp"
@@ -104,6 +106,8 @@ void testUpdateQueue();
 void testQueueBackpressure();
 void testWorkerShutdownDrain();
 void testWorkerShutdownActive();
+void testIgnoreParser();
+void testMediaExemptions();
 void testBotTexts();
 
 int runTests() {
@@ -273,6 +277,8 @@ int runTests() {
     testQueueBackpressure();
     testWorkerShutdownDrain();
     testWorkerShutdownActive();
+    testIgnoreParser();
+    testMediaExemptions();
 
     if (failures == 0) {
         std::cout << "warden_tests: all checks passed\n";
@@ -404,13 +410,91 @@ void testWorkerShutdownActive() {
     check(dispatcher.inFlightUpdates() == 0, "active shutdown in-flight reaches zero");
 }
 
+void testIgnoreParser() {
+    std::string error;
+    check(!warden::parseIgnoreArgs("", false, true, error).has_value(),
+          "bare ignore reply requires a kind");
+
+    const auto replyAll = warden::parseIgnoreArgs("全部", false, true, error);
+    check(replyAll.has_value(), "ignore explicit all parses");
+    check(replyAll.has_value() && replyAll->scope == warden::IgnoreScope::kReply,
+          "ignore reply scope");
+    check(replyAll.has_value() && replyAll->kinds.size() == warden::kMediaKinds.size(),
+          "ignore explicit all kinds");
+
+    const auto sticker = warden::parseIgnoreArgs("sticker", false, true, error);
+    check(sticker.has_value() && sticker->kinds == std::vector<std::string>{"sticker"},
+          "ignore sticker parses");
+
+    const auto remove = warden::parseIgnoreArgs("remove sticker", false, true, error);
+    check(remove.has_value() && remove->action == warden::IgnoreAction::kRemove,
+          "ignore remove parses");
+    check(remove.has_value() && remove->kinds == std::vector<std::string>{"sticker"},
+          "ignore remove sticker kind");
+
+    const auto admin = warden::parseIgnoreArgs("admin sticker off", false, false, error);
+    check(admin.has_value() && admin->scope == warden::IgnoreScope::kAdmin, "ignore admin scope");
+    check(admin.has_value() && admin->action == warden::IgnoreAction::kRemove,
+          "ignore admin off action");
+    check(admin.has_value() && admin->kinds == std::vector<std::string>{"sticker"},
+          "ignore admin sticker kind");
+
+    const auto cnAdmin = warden::parseIgnoreArgs("管理员 贴纸", false, false, error);
+    check(cnAdmin.has_value() && cnAdmin->scope == warden::IgnoreScope::kAdmin,
+          "ignore Chinese admin scope");
+    check(cnAdmin.has_value() && cnAdmin->kinds == std::vector<std::string>{"sticker"},
+          "ignore Chinese admin kind");
+
+    const auto user = warden::parseIgnoreArgs("@Alice photo", false, false, error);
+    check(user.has_value() && user->scope == warden::IgnoreScope::kUsername,
+          "ignore username scope");
+    check(user.has_value() && user->username == "alice", "ignore username normalized");
+    check(user.has_value() && user->kinds == std::vector<std::string>{"photo"},
+          "ignore username kind");
+
+    const auto id = warden::parseIgnoreArgs("id 123456789 video", false, false, error);
+    check(id.has_value() && id->scope == warden::IgnoreScope::kUser, "ignore id scope");
+    check(id.has_value() && id->userId == 123456789, "ignore id value");
+
+    check(!warden::parseIgnoreArgs("sticker", false, false, error).has_value(),
+          "ignore without reply needs target");
+}
+
+void testMediaExemptions() {
+    warden::Store store(":memory:");
+    const std::int64_t chatId = -100;
+    store.ensureChat(chatId, "supergroup", "test", 1000);
+    store.addExemption(chatId, "admin", 0, {}, "photo", 1, 1000);
+    store.addExemption(chatId, "user", 123, "alice", "sticker", 1, 1000);
+    store.addExemption(chatId, "username", 0, "bob", "video", 1, 1000);
+
+    const auto settings = store.settings(chatId);
+    check(warden::isMediaExempt(*settings, 0, {}, false, true, "photo"),
+          "anonymous admin photo exempt");
+    check(warden::isMediaExempt(*settings, 123, "alice", false, false, "sticker"),
+          "user sticker exempt");
+    check(warden::isMediaExempt(*settings, 999, "bob", false, false, "video"),
+          "username video exempt");
+    check(!warden::isMediaExempt(*settings, 123, "alice", false, false, "photo"),
+          "user photo not exempt");
+
+    store.addDeletion(chatId, 1, "photo", 2000, 1000, 0, 123);
+    store.addDeletion(chatId, 2, "sticker", 2000, 1000, 0, 123);
+    store.cancelPendingBySender(chatId, 123, "sticker");
+    check(store.pendingDeletionsFor(chatId) == 1, "cancel only matching kind");
+    store.cancelPendingBySender(chatId, 123);
+    check(store.pendingDeletionsFor(chatId) == 0, "cancel all sender tasks");
+
+    store.removeExemption(chatId, "user", 123, "alice", "sticker");
+    check(!warden::isMediaExempt(*store.settings(chatId), 123, "alice", false, false, "sticker"),
+          "remove user exemption");
+}
+
 void testBotTexts() {
     const auto help = warden::helpText("MyBot", "my_bot");
     check(help.find("MyBot") != std::string::npos, "help uses bot name");
     check(help.find("Warden") == std::string::npos, "help does not hardcode Warden");
     check(help.find("https://t.me/my_bot") != std::string::npos, "help uses current username");
-    const auto intro = warden::introText("MyBot");
-    check(intro.find("MyBot") != std::string::npos, "intro uses bot name");
 }
 
 void testCommandPolicies() {
