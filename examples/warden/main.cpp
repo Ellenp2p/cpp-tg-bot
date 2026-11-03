@@ -29,6 +29,7 @@
 #include "commands.hpp"
 #include "config.hpp"
 #include "health.hpp"
+#include "ignore.hpp"
 #include "media.hpp"
 #include "replies.hpp"
 #include "scheduler.hpp"
@@ -231,9 +232,9 @@ net::awaitable<int> run(Config cfg) {
             co_return co_await groupCommandGuard(b, *store, *sched, owners, *menus, msg);
         });
 
-    dispatcher.onMyChatMember([store, sched, menus, botId, botName, knownChats](
+    dispatcher.onMyChatMember([store, sched, menus, botId, knownChats](
                                   BotClient& b, const json mcm) -> net::awaitable<void> {
-        co_await handleMyChatMember(b, *store, *sched, *menus, botId, botName, knownChats, mcm);
+        co_await handleMyChatMember(b, *store, *sched, *menus, botId, knownChats, mcm);
     });
 
     // 未注册命令：只有明确 /foo@本bot 才删；/foo 和 /foo@OtherBot 不碰
@@ -308,6 +309,46 @@ net::awaitable<int> run(Config cfg) {
             }
         });
 
+    // 自然语言：回复某人的消息后发“忽略 贴纸”/“恢复 贴纸”。
+    dispatcher.onAnyMessage(
+        [store, sched, cfg](BotClient& b, const json msg) -> net::awaitable<void> {
+            if (!isGroupType(chatTypeOf(msg))) {
+                co_return;
+            }
+            const auto text = trim(msg.value("text", std::string{}));
+            for (const auto [prefix, remove] : {std::pair<std::string_view, bool>{"忽略", false},
+                                                std::pair<std::string_view, bool>{"恢复", true}}) {
+                if (std::string_view{text}.substr(0, prefix.size()) != prefix) {
+                    continue;
+                }
+                if (text.size() > prefix.size()) {
+                    const auto next = static_cast<unsigned char>(text[prefix.size()]);
+                    if (!std::isspace(next) && next != ':' &&
+                        text.compare(prefix.size(), 3, "：") != 0) {
+                        continue;
+                    }
+                }
+                std::string args = trim(std::string_view{text}.substr(prefix.size()));
+                while (!args.empty()) {
+                    if (args.front() == ':') {
+                        args = trim(std::string_view{args}.substr(1));
+                        continue;
+                    }
+                    if (args.rfind("：", 0) == 0) {
+                        args = trim(std::string_view{args}.substr(3));
+                        continue;
+                    }
+                    break;
+                }
+                // 只有“忽略”/“恢复”本身：当成普通聊天，不响应，避免误触。
+                if (args.empty()) {
+                    co_return;
+                }
+                co_await handleIgnore(b, *store, *sched, msg, args, remove, false, cfg, true);
+                co_return;
+            }
+        });
+
     // ---- /start /help ----
     dispatcher.onCommand(
         "start",
@@ -348,6 +389,18 @@ net::awaitable<int> run(Config cfg) {
         "autodel", [store, sched, cfg](BotClient& b, const json msg) -> net::awaitable<void> {
             co_await handleAutodel(b, *store, *sched, msg, commandArgs(msg), true, cfg, false);
         });
+
+    // ---- /ignore /restore ----
+    dispatcher.onCommand(
+        "ignore", [store, sched, cfg](BotClient& b, const json msg) -> net::awaitable<void> {
+            co_await handleIgnore(
+                b, *store, *sched, msg, commandArgs(msg), false, false, cfg, false);
+        });
+    dispatcher.onCommand("restore",
+                         [store, sched, cfg](BotClient& b, const json msg) -> net::awaitable<void> {
+                             co_await handleIgnore(
+                                 b, *store, *sched, msg, commandArgs(msg), true, false, cfg, false);
+                         });
 
     // ---- /status ----
     dispatcher.onCommand(
