@@ -24,40 +24,6 @@ inline std::string htmlEscape(std::string_view s) {
     return out;
 }
 
-inline std::string introText(std::string_view botName) {
-    const std::string name = botName.empty() ? "本机器人" : std::string{botName};
-    return "🛡 我是 " + name +
-           "，本群的自动清理管家。\n"
-           "\n"
-           "管理员发 /autodel on 即可启用：贴纸 1 分钟、图片/视频/语音 5 分钟\n"
-           "后自动删除（可逐类改时限，也可关掉某一类）。\n"
-           "\n"
-           "常用命令（管理员）：\n"
-           "• /autodel —— 查看本群设置\n"
-           "• /autodel 贴纸 20秒 —— 贴纸 20 秒后删\n"
-           "• /autodel 图片 开启 1分钟 —— 中文写法\n"
-           "• /autodel 视频 关闭 —— 不再删视频\n"
-           "• /autodel all 10m —— 所有支持的类型统一 10 分钟\n"
-           "• 回复某人发 /ignore 贴纸 —— 忽略他的贴纸\n"
-           "• 回复某人发 /ignore 全部 —— 忽略他的全部媒体\n"
-           "• 回复某人发 /restore 贴纸 —— 恢复他的贴纸\n"
-           "• 回复某人发 /restore 全部 —— 恢复他的全部媒体\n"
-           "• /ignore list —— 查看当前豁免规则\n"
-           "• /status —— 检查我的管理员权限\n"
-           "\n"
-           "也可以直接发（不用 /，要回复某人的消息）：\n"
-           "忽略 贴纸 / 忽略 全部\n"
-           "恢复 贴纸 / 恢复 全部\n"
-           "忽略管理员 全部 / 恢复管理员 全部\n"
-           "只发“忽略”或“恢复”不会执行；全部媒体必须写“全部”。\n"
-           "\n"
-           "自动清理也可以直接发：\n"
-           "自动删除 贴纸 开启 10秒\n"
-           "自动删除 图片 开启 1分钟\n"
-           "\n"
-           "需要给我「删除消息」管理员权限；回复只发给你。";
-}
-
 inline std::string helpText(std::string_view botName, std::string_view botUsername) {
     // 用 HTML parse_mode 发送，<code> 里的内容在 Telegram 里可以点击复制。
     const std::string title = botName.empty() ? "群务管家" : htmlEscape(botName);

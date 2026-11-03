@@ -495,8 +495,6 @@ void testBotTexts() {
     check(help.find("MyBot") != std::string::npos, "help uses bot name");
     check(help.find("Warden") == std::string::npos, "help does not hardcode Warden");
     check(help.find("https://t.me/my_bot") != std::string::npos, "help uses current username");
-    const auto intro = warden::introText("MyBot");
-    check(intro.find("MyBot") != std::string::npos, "intro uses bot name");
 }
 
 void testCommandPolicies() {
