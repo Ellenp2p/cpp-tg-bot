@@ -7,6 +7,7 @@
 //   - 不同 chat 由多个 worker 并行；
 //   - 队列有上限，满了 dispatch() 返回 false，调用方必须背压；
 //   - 队列按 chat lane 存，lane 空了立即 erase，不按群无限增长；
+//   - worker 通过 Asio channel 等待 ready chat，不再定时轮询；
 //   - 全部跑在同一个 io_context 单线程上，无锁。
 
 #include <tgbot/bot_client.hpp>
@@ -19,6 +20,10 @@
 #include <boost/asio/any_io_executor.hpp>
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
+#include <boost/asio/experimental/channel.hpp>
+#include <boost/asio/use_awaitable.hpp>
+#include <boost/system/error_code.hpp>
+#include <boost/system/system_error.hpp>
 
 #include <spdlog/spdlog.h>
 
@@ -90,7 +95,8 @@ public:
                            std::size_t maxPending = 2000,
                            int workers = 8,
                            std::size_t maxPendingBytes = 32 * 1024 * 1024)
-        : state_(std::make_shared<State>(std::move(executor), maxPending, maxPendingBytes)) {
+        : state_(
+              std::make_shared<State>(std::move(executor), maxPending, maxPendingBytes, workers)) {
         const auto count = std::max(1, workers);
         metrics::setWorkerCount(count);
         metrics::setUpdateQueueCapacity(static_cast<double>(maxPending),
@@ -104,8 +110,12 @@ public:
     }
 
     ~UpdateWorkers() {
-        // 停止接收新 update；worker 会把已入队的处理完再退出。
+        // 停止接收新 update。worker 会把已入队任务处理完；最后一个
+        // worker 在 pending/active 都归零时关闭 channel，唤醒其余 worker。
         state_->accepting = false;
+        if (state_->pending == 0 && state_->activeJobs == 0) {
+            state_->ready->close();
+        }
     }
 
     UpdateWorkers(const UpdateWorkers&) = delete;
@@ -144,7 +154,7 @@ public:
         dispatcher.beginUpdate();
         if (!lane.active) {
             lane.active = true;
-            state_->ready.push_back(chatId);
+            sendReady(state_, chatId);
         }
         return true;
     }
@@ -167,34 +177,68 @@ private:
         bool active = false;
     };
 
+    using ReadyChannel =
+        boost::asio::experimental::channel<void(boost::system::error_code, std::int64_t)>;
+
     struct State {
-        State(boost::asio::any_io_executor ex, std::size_t maxPending, std::size_t maxPendingBytes)
-            : executor(std::move(ex)), maxPending(maxPending), maxPendingBytes(maxPendingBytes) {}
+        State(boost::asio::any_io_executor ex,
+              std::size_t maxPending,
+              std::size_t maxPendingBytes,
+              int workers)
+            : executor(std::move(ex)),
+              ready(std::make_shared<ReadyChannel>(
+                  executor, maxPending + static_cast<std::size_t>(std::max(1, workers)) + 2)),
+              maxPending(maxPending),
+              maxPendingBytes(maxPendingBytes) {}
 
         boost::asio::any_io_executor executor;
+        std::shared_ptr<ReadyChannel> ready;
         std::unordered_map<std::int64_t, Lane> lanes;
-        std::deque<std::int64_t> ready;
         std::size_t pending = 0;
         std::size_t pendingBytes = 0;
         std::size_t maxPending = 2000;
         std::size_t maxPendingBytes = 32 * 1024 * 1024;
+        std::size_t activeJobs = 0;
         bool accepting = true;
     };
 
+    // channel 正常不会满；兜底用 async_send，避免极端情况下丢唤醒。
+    static void sendReady(const std::shared_ptr<State>& state, std::int64_t chatId) {
+        if (state->ready->try_send(boost::system::error_code{}, chatId)) {
+            return;
+        }
+        boost::asio::co_spawn(
+            state->executor,
+            [state, chatId]() -> boost::asio::awaitable<void> {
+                try {
+                    co_await state->ready->async_send(
+                        boost::system::error_code{}, chatId, boost::asio::use_awaitable);
+                } catch (const std::exception& e) {
+                    spdlog::warn("ready channel send failed: {}", e.what());
+                }
+            },
+            boost::asio::detached);
+    }
+
     static boost::asio::awaitable<void> workerLoop(std::shared_ptr<State> state) {
         for (;;) {
-            if (!state->accepting && state->pending == 0 && state->ready.empty()) {
+            std::int64_t chatId = 0;
+            try {
+                chatId = co_await state->ready->async_receive(boost::asio::use_awaitable);
+            } catch (const boost::system::system_error& e) {
+                // close() 是正常的停机路径；其他错误也不应该让 worker 空转。
+                if (e.code() != boost::asio::experimental::error::channel_closed) {
+                    spdlog::warn("ready channel receive failed: {}", e.what());
+                }
                 co_return;
             }
-            if (state->ready.empty()) {
-                co_await tgbot::co_sleep(std::chrono::milliseconds{2});
-                continue;
-            }
 
-            const auto chatId = state->ready.front();
-            state->ready.pop_front();
             auto laneIt = state->lanes.find(chatId);
             if (laneIt == state->lanes.end() || laneIt->second.pending.empty()) {
+                if (!state->accepting && state->pending == 0 && state->activeJobs == 0) {
+                    state->ready->close();
+                    co_return;
+                }
                 continue;
             }
 
@@ -202,6 +246,7 @@ private:
             laneIt->second.pending.pop_front();
             --state->pending;
             state->pendingBytes -= job.bytes;
+            ++state->activeJobs;
             metrics::setUpdateQueue(static_cast<double>(state->pending),
                                     static_cast<double>(state->pendingBytes));
             metrics::observeUpdateWait(
@@ -218,6 +263,7 @@ private:
                 spdlog::error("update dispatch failed: unknown exception");
             }
             metrics::workerBusy(-1);
+            --state->activeJobs;
             metrics::observeUpdateHandle(
                 job.type,
                 std::chrono::duration<double>(std::chrono::steady_clock::now() - handleStarted)
@@ -226,13 +272,17 @@ private:
 
             // job 执行期间可能有新 update 入队；重新查，别持有引用跨 co_await。
             laneIt = state->lanes.find(chatId);
-            if (laneIt == state->lanes.end()) {
-                continue;
+            if (laneIt != state->lanes.end()) {
+                if (laneIt->second.pending.empty()) {
+                    state->lanes.erase(laneIt);
+                } else {
+                    sendReady(state, chatId);
+                }
             }
-            if (laneIt->second.pending.empty()) {
-                state->lanes.erase(laneIt);
-            } else {
-                state->ready.push_back(chatId);
+
+            if (!state->accepting && state->pending == 0 && state->activeJobs == 0) {
+                state->ready->close();
+                co_return;
             }
         }
     }
