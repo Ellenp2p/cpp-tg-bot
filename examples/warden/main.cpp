@@ -232,9 +232,9 @@ net::awaitable<int> run(Config cfg) {
             co_return co_await groupCommandGuard(b, *store, *sched, owners, *menus, msg);
         });
 
-    dispatcher.onMyChatMember([store, sched, menus, botId, botName, knownChats](
+    dispatcher.onMyChatMember([store, sched, menus, botId, knownChats](
                                   BotClient& b, const json mcm) -> net::awaitable<void> {
-        co_await handleMyChatMember(b, *store, *sched, *menus, botId, botName, knownChats, mcm);
+        co_await handleMyChatMember(b, *store, *sched, *menus, botId, knownChats, mcm);
     });
 
     // 未注册命令：只有明确 /foo@本bot 才删；/foo 和 /foo@OtherBot 不碰

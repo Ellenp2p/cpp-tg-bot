@@ -16,7 +16,6 @@ inline net::awaitable<void> handleMyChatMember(
     DeleteScheduler& sched,
     GroupMenuPublisher& menus,
     std::int64_t botId,
-    std::string_view botName,
     std::shared_ptr<std::unordered_set<std::int64_t>> knownChats,
     json update) {
     const auto chat = update.value("chat", json::object());
@@ -55,20 +54,7 @@ inline net::awaitable<void> handleMyChatMember(
         co_await menus.publish(bot, chatId);
     }
 
-    const bool isNewMembership =
-        oldStatus == "left" || oldStatus == "kicked" || oldStatus == "unknown";
-    if (isNewMembership) {
-        try {
-            co_await bot.sendMessage(
-                chatId,
-                introText(botName) + (record.has_value() && record->isAdmin()
-                                          ? ""
-                                          : "\n\n⚠️ 我现在还不是管理员，请把我设为管理员并"
-                                            "勾选「删除消息」。"));
-        } catch (const std::exception& e) {
-            spdlog::warn("send intro to {} failed: {}", chatId, e.what());
-        }
-    }
+    // 入群欢迎已关闭：只登记群、刷新权限和菜单，不发群消息。
 }
 
 inline net::awaitable<void> handleMedia(
