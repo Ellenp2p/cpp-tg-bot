@@ -51,10 +51,12 @@ public:
                   std::int64_t messageId,
                   std::string kind,
                   std::int64_t dueAt,
-                  std::int64_t targetUserId = 0);
+                  std::int64_t targetUserId = 0,
+                  std::int64_t senderId = 0);
     void cancelChat(std::int64_t chatId);
     void cancelKind(std::int64_t chatId, std::string_view kind);
     void cancelMessage(std::int64_t chatId, std::int64_t messageId);
+    void cancelSender(std::int64_t chatId, std::int64_t senderId, std::string_view kind = {});
 
 private:
     // 先补扫置顶，再启动 worker；补扫期间队列不动，避免漏掉历史置顶
