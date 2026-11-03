@@ -248,7 +248,9 @@ inline std::string exemptionListText(const ChatSettings& settings) {
         text += "\n• " + exemptionLabel(group.scope, group.userId, group.username) + "：" +
                 kindListText(group.kinds);
     }
-    text += "\n\n用法：回复某人的消息，发 /ignore 贴纸 或 /restore 贴纸。";
+    text +=
+        "\n\n用法：回复某人的消息，发 /ignore 贴纸 或 /ignore 全部；"
+        "恢复用 /restore 贴纸 或 /restore 全部。";
     return text;
 }
 
@@ -303,9 +305,9 @@ inline net::awaitable<void> handleIgnore(BotClient& b,
     std::string error;
     const auto parsed = parseIgnoreArgs(args, defaultRemove, hasReply, error);
     if (!parsed.has_value()) {
-        co_await reply("没看懂：" + error +
-                       "\n用法：回复某人的消息后发 /ignore 贴纸；"
-                       "全部媒体请发 /ignore 全部；恢复用 /restore 贴纸 或 /restore 全部。");
+        const std::string command = defaultRemove ? "/restore" : "/ignore";
+        co_await reply("没看懂：" + error + "\n用法：回复某人的消息后发 " + command +
+                       " 贴纸；全部媒体请发 " + command + " 全部。");
         co_return;
     }
     const auto req = *parsed;
