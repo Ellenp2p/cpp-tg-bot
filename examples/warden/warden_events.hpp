@@ -1,6 +1,7 @@
 #pragma once
 #include <memory>
 #include <unordered_set>
+#include "exemptions.hpp"
 #include "scheduler.hpp"
 #include "store.hpp"
 #include "warden_chat_sync.hpp"
@@ -109,6 +110,25 @@ inline net::awaitable<void> handleMedia(
     if (!settings->enabled) {
         co_return;
     }
+
+    const auto from = msg.value("from", json::object());
+    const auto senderId = from.value("id", std::int64_t{0});
+    const auto senderUsername = lower(from.value("username", std::string{}));
+    const auto senderChatId = msg.value("sender_chat", json::object()).value("id", std::int64_t{0});
+    const bool anonymousAdmin = senderChatId == chatId;
+    const bool hasExemptions = !settings->exemptions.empty();
+    const bool senderIsAdmin =
+        hasExemptions && senderId != 0 && store.isChatAdmin(chatId, senderId);
+    if (hasExemptions &&
+        isMediaExempt(*settings, senderId, senderUsername, senderIsAdmin, anonymousAdmin, kind)) {
+        spdlog::debug("skip exempt media: chat={} msg={} sender={} kind={}",
+                      chatId,
+                      messageId,
+                      senderId,
+                      kind);
+        co_return;
+    }
+
     int delay = kindDefaultDelay(kind);
     if (const auto it = settings->delays.find(kind); it != settings->delays.end()) {
         delay = it->second;
@@ -128,7 +148,7 @@ inline net::awaitable<void> handleMedia(
     if (due <= now) {
         due = now + 1; // 停机补收的旧消息：立刻删
     }
-    sched.schedule(chatId, messageId, kind, due);
+    sched.schedule(chatId, messageId, kind, due, 0, senderId);
     spdlog::debug(
         "scheduled delete: chat={} msg={} kind={} in {}s", chatId, messageId, kind, due - now);
 }

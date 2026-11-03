@@ -97,8 +97,10 @@ void DeleteScheduler::schedule(std::int64_t chatId,
                                std::int64_t messageId,
                                std::string kind,
                                std::int64_t dueAt,
-                               std::int64_t targetUserId) {
-    store_.addDeletion(chatId, messageId, std::move(kind), dueAt, nowSeconds(), targetUserId);
+                               std::int64_t targetUserId,
+                               std::int64_t senderId) {
+    store_.addDeletion(
+        chatId, messageId, std::move(kind), dueAt, nowSeconds(), targetUserId, senderId);
 }
 
 void DeleteScheduler::cancelChat(std::int64_t chatId) {
@@ -111,6 +113,12 @@ void DeleteScheduler::cancelKind(std::int64_t chatId, std::string_view kind) {
 
 void DeleteScheduler::cancelMessage(std::int64_t chatId, std::int64_t messageId) {
     store_.cancelMessageDeletion(chatId, messageId);
+}
+
+void DeleteScheduler::cancelSender(std::int64_t chatId,
+                                   std::int64_t senderId,
+                                   std::string_view kind) {
+    store_.cancelPendingBySender(chatId, senderId, kind);
 }
 
 net::awaitable<void> DeleteScheduler::workerLoop() {

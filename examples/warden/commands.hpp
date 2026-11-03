@@ -41,7 +41,7 @@ struct CommandPolicy {
     GroupDeny groupDeny = GroupDeny::kNotApplicable;
 };
 
-inline constexpr std::array<CommandPolicy, 9> kCommandPolicies{{
+inline constexpr std::array<CommandPolicy, 11> kCommandPolicies{{
     //  命令        描述                              私聊   群   群管   owner  群菜单 私聊菜单
     //  ephemeral 删裸命令 群拒绝
     {"start",
@@ -70,6 +70,28 @@ inline constexpr std::array<CommandPolicy, 9> kCommandPolicies{{
     // bot 删不掉；普通命令才能“出现后立即 deleteMessage”。
     {"autodel",
      "本群自动清理：查看 / on / off / 类型 时限",
+     false,
+     true,
+     true,
+     false,
+     true,
+     false,
+     false,
+     true,
+     GroupDeny::kNotApplicable},
+    {"ignore",
+     "回复某人，忽略他的媒体（可指定类型 / admin）",
+     false,
+     true,
+     true,
+     false,
+     true,
+     false,
+     false,
+     true,
+     GroupDeny::kNotApplicable},
+    {"restore",
+     "回复某人，恢复他的媒体自动删除",
      false,
      true,
      true,
