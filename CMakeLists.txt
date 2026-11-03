@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.25)
 project(tg_bot_framework VERSION 0.2.0 LANGUAGES CXX)
 
 # Warden 独立版本号；release workflow 会传入对应 tag 的版本。
-set(WARDEN_VERSION "0.2.1" CACHE STRING "Warden application version")
+set(WARDEN_VERSION "0.2.2" CACHE STRING "Warden application version")
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
