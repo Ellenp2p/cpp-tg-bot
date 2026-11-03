@@ -340,6 +340,10 @@ net::awaitable<int> run(Config cfg) {
                     }
                     break;
                 }
+                // 只有“忽略”/“恢复”本身：当成普通聊天，不响应，避免误触。
+                if (args.empty()) {
+                    co_return;
+                }
                 co_await handleIgnore(b, *store, *sched, msg, args, remove, false, cfg, true);
                 co_return;
             }
