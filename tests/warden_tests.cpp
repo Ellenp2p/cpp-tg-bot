@@ -412,12 +412,15 @@ void testWorkerShutdownActive() {
 
 void testIgnoreParser() {
     std::string error;
-    const auto replyAll = warden::parseIgnoreArgs("", false, true, error);
-    check(replyAll.has_value(), "ignore reply all parses");
+    check(!warden::parseIgnoreArgs("", false, true, error).has_value(),
+          "bare ignore reply requires a kind");
+
+    const auto replyAll = warden::parseIgnoreArgs("全部", false, true, error);
+    check(replyAll.has_value(), "ignore explicit all parses");
     check(replyAll.has_value() && replyAll->scope == warden::IgnoreScope::kReply,
           "ignore reply scope");
     check(replyAll.has_value() && replyAll->kinds.size() == warden::kMediaKinds.size(),
-          "ignore reply defaults to all kinds");
+          "ignore explicit all kinds");
 
     const auto sticker = warden::parseIgnoreArgs("sticker", false, true, error);
     check(sticker.has_value() && sticker->kinds == std::vector<std::string>{"sticker"},

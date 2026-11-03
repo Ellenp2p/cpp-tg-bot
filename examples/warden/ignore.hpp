@@ -72,7 +72,8 @@ inline std::optional<IgnoreRequest> parseIgnoreArgs(std::string_view args,
             }
             req.action = IgnoreAction::kList;
         } else {
-            req.kinds = allMediaKinds();
+            error = "请指定类型；忽略/恢复全部媒体请写「全部」。";
+            return std::nullopt;
         }
         return req;
     }
@@ -130,7 +131,12 @@ inline std::optional<IgnoreRequest> parseIgnoreArgs(std::string_view args,
             req.action = IgnoreAction::kRemove;
         }
         if (req.kinds.empty()) {
-            req.kinds = allMediaKinds();
+            if (sawOn || sawOff) {
+                req.kinds = allMediaKinds();
+            } else {
+                error = "请指定类型；全部媒体请写「全部」。";
+                return std::nullopt;
+            }
         }
         return req;
     }
@@ -194,7 +200,8 @@ inline std::optional<IgnoreRequest> parseIgnoreArgs(std::string_view args,
         ++i;
     }
     if (req.kinds.empty()) {
-        req.kinds = allMediaKinds();
+        error = "请指定类型；忽略/恢复全部媒体请写「全部」。";
+        return std::nullopt;
     }
     return req;
 }
@@ -297,7 +304,8 @@ inline net::awaitable<void> handleIgnore(BotClient& b,
     const auto parsed = parseIgnoreArgs(args, defaultRemove, hasReply, error);
     if (!parsed.has_value()) {
         co_await reply("没看懂：" + error +
-                       "\n用法：回复某人的消息后发 /ignore 贴纸，或 /restore 贴纸。");
+                       "\n用法：回复某人的消息后发 /ignore 贴纸；"
+                       "全部媒体请发 /ignore 全部；恢复用 /restore 贴纸 或 /restore 全部。");
         co_return;
     }
     const auto req = *parsed;
