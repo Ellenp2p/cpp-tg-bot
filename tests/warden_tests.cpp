@@ -102,6 +102,8 @@ void testHealthServer() {
 void testCommandPolicies();
 void testUpdateQueue();
 void testQueueBackpressure();
+void testWorkerShutdownDrain();
+void testWorkerShutdownActive();
 void testBotTexts();
 
 int runTests() {
@@ -269,6 +271,8 @@ int runTests() {
     testBotTexts();
     testUpdateQueue();
     testQueueBackpressure();
+    testWorkerShutdownDrain();
+    testWorkerShutdownActive();
 
     if (failures == 0) {
         std::cout << "warden_tests: all checks passed\n";
@@ -332,6 +336,72 @@ void testQueueBackpressure() {
     }
     check(handled == 1, "only accepted update handled");
     check(dispatcher.inFlightUpdates() == 0, "backpressure queue drained");
+}
+
+void testWorkerShutdownDrain() {
+    boost::asio::io_context io;
+    tgbot::BotClient bot("123:test");
+    tgbot::Dispatcher dispatcher;
+    int handled = 0;
+    dispatcher.onAnyMessage(
+        [&handled](tgbot::BotClient&, nlohmann::json) -> boost::asio::awaitable<void> {
+            ++handled;
+            co_await tgbot::co_sleep(std::chrono::milliseconds{1});
+        });
+
+    auto workers = std::make_unique<tgbot::detail::UpdateWorkers>(io.get_executor(), 200, 2);
+    const auto update = [](std::int64_t msgId) {
+        return nlohmann::json{{"update_id", msgId},
+                              {"message", {{"message_id", msgId}, {"chat", {{"id", -100}}}}}};
+    };
+    for (std::int64_t i = 1; i <= 100; ++i) {
+        check(workers->dispatch(update(i), bot, dispatcher), "shutdown queue accepts update");
+    }
+
+    // 模拟停机：析构后 worker 必须把已入队任务处理完，不能提前 close。
+    workers.reset();
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{5};
+    while (dispatcher.inFlightUpdates() > 0 && std::chrono::steady_clock::now() < deadline) {
+        io.restart();
+        io.run_for(std::chrono::milliseconds{10});
+    }
+    check(handled == 100, "shutdown drains all queued updates");
+    check(dispatcher.inFlightUpdates() == 0, "shutdown in-flight reaches zero");
+}
+
+void testWorkerShutdownActive() {
+    boost::asio::io_context io;
+    tgbot::BotClient bot("123:test");
+    tgbot::Dispatcher dispatcher;
+    std::atomic<bool> started{false};
+    int handled = 0;
+    dispatcher.onAnyMessage([&](tgbot::BotClient&, nlohmann::json) -> boost::asio::awaitable<void> {
+        started.store(true);
+        co_await tgbot::co_sleep(std::chrono::milliseconds{30});
+        ++handled;
+    });
+
+    auto workers = std::make_unique<tgbot::detail::UpdateWorkers>(io.get_executor(), 10, 1);
+    const nlohmann::json update{{"update_id", 1},
+                                {"message", {{"message_id", 1}, {"chat", {{"id", -100}}}}}};
+    check(workers->dispatch(update, bot, dispatcher), "active test accepted");
+
+    // 让 worker 进入 handler 后再析构，验证 active job 不会被 close 打断。
+    const auto startDeadline = std::chrono::steady_clock::now() + std::chrono::seconds{1};
+    while (!started.load() && std::chrono::steady_clock::now() < startDeadline) {
+        io.restart();
+        io.run_for(std::chrono::milliseconds{5});
+    }
+    check(started.load(), "active handler started");
+    workers.reset();
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{2};
+    while (dispatcher.inFlightUpdates() > 0 && std::chrono::steady_clock::now() < deadline) {
+        io.restart();
+        io.run_for(std::chrono::milliseconds{10});
+    }
+    check(handled == 1, "active update finishes during shutdown");
+    check(dispatcher.inFlightUpdates() == 0, "active shutdown in-flight reaches zero");
 }
 
 void testBotTexts() {
