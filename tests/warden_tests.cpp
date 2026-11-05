@@ -510,6 +510,11 @@ void testCommandPolicies() {
 
     const auto* panel = warden::findCommandPolicy("panel");
     check(panel != nullptr && panel->privateAllowed && !panel->groupAllowed, "panel private only");
+    check(panel != nullptr && !panel->ownerOnly, "panel available to group admins");
+
+    const auto* mygroups = warden::findCommandPolicy("mygroups");
+    check(mygroups != nullptr && mygroups->privateAllowed && !mygroups->ownerOnly,
+          "mygroups available to group admins");
 
     const auto* stats = warden::findCommandPolicy("stats");
     check(stats != nullptr && stats->ownerOnly && !stats->privateMenu, "stats owner only hidden");
