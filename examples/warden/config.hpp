@@ -71,6 +71,11 @@ struct Config {
     std::string logLevel = "info";
     std::string instanceId;
 
+    // 可选：接入 warden-platform 支付/权益内部 API。
+    // 为空时 Warden 仍可独立运行，只是不处理 Stars 支付回调。
+    std::string platformUrl;
+    std::string platformInternalToken;
+
     // 健康检查/控制端口（默认只监听回环）
     std::string healthHost = "127.0.0.1";
     int healthPort = 9090;
@@ -160,6 +165,8 @@ inline Config loadConfig(int argc, char** argv) {
         cfg.instanceId =
             "warden-" + std::to_string(std::chrono::system_clock::now().time_since_epoch().count());
     }
+    cfg.platformUrl = envOr("WARDEN_PLATFORM_URL");
+    cfg.platformInternalToken = envOr("WARDEN_PLATFORM_INTERNAL_TOKEN");
     cfg.healthHost = envOr("WARDEN_HEALTH_HOST", cfg.healthHost);
     cfg.healthPort = std::clamp(envInt("WARDEN_HEALTH_PORT", cfg.healthPort), 0, 65535);
     cfg.controlToken = envOr("WARDEN_CONTROL_TOKEN");

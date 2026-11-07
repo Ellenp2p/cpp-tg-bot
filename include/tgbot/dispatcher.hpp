@@ -26,6 +26,10 @@ public:
     // handler 收到的是 update 里的 my_chat_member 对象（含 chat / old_chat_member
     // / new_chat_member）。需要在 allowed_updates 里显式订阅 my_chat_member。
     void onMyChatMember(MessageHandler handler);
+    // Telegram Stars 支付：pre_checkout_query 顶层 update；successful_payment
+    // 在 message 里。两者都需要显式订阅 allowed_updates。
+    void onPreCheckout(MessageHandler handler);
+    void onSuccessfulPayment(MessageHandler handler);
 
     // 命令前置守卫：返回 false 时该命令**不会**进入任何 handler（静默丢弃）。
     // 典型用法是"群里只允许管理员用命令"——Telegram 没有服务端权限，必须在
@@ -52,6 +56,8 @@ private:
     std::vector<MessageHandler> anyMessage_;
     std::map<std::string, MessageHandler> callbackQueries_;
     MessageHandler myChatMember_;
+    MessageHandler preCheckout_;
+    MessageHandler successfulPayment_;
     CommandGuard commandGuard_;
     std::string botUsername_;
     std::atomic<int> inFlight_{0};

@@ -50,6 +50,14 @@ void Dispatcher::onMyChatMember(MessageHandler handler) {
     myChatMember_ = std::move(handler);
 }
 
+void Dispatcher::onPreCheckout(MessageHandler handler) {
+    preCheckout_ = std::move(handler);
+}
+
+void Dispatcher::onSuccessfulPayment(MessageHandler handler) {
+    successfulPayment_ = std::move(handler);
+}
+
 void Dispatcher::setCommandGuard(CommandGuard guard) {
     commandGuard_ = std::move(guard);
 }
@@ -87,6 +95,18 @@ boost::asio::awaitable<void> Dispatcher::dispatch(json update, BotClient& bot) {
         co_return;
     }
 
+    if (const auto pcIt = update.find("pre_checkout_query"); pcIt != update.end()) {
+        if (preCheckout_) {
+            json query = *pcIt;
+            try {
+                co_await preCheckout_(bot, std::move(query));
+            } catch (const std::exception& e) {
+                spdlog::error("pre_checkout_query handler failed: {}", e.what());
+            }
+        }
+        co_return;
+    }
+
     // 回调查询：按 callback_data 最长前缀匹配；cq 按值持有，避免悬垂
     if (const auto cqIt = update.find("callback_query"); cqIt != update.end()) {
         const json cq = *cqIt;
@@ -116,6 +136,14 @@ boost::asio::awaitable<void> Dispatcher::dispatch(json update, BotClient& bot) {
         co_return; // 其他 update 类型（edited_message 等）后续按需添加
     }
     json msg = *msgIt; // 按值持有（命令带 @后缀 时需归一化文本）
+    if (msg.contains("successful_payment") && successfulPayment_) {
+        try {
+            co_await successfulPayment_(bot, std::move(msg));
+        } catch (const std::exception& e) {
+            spdlog::error("successful_payment handler failed: {}", e.what());
+        }
+        co_return;
+    }
     const std::string text = msg.value("text", "");
 
     // 命令消息："/start" 或 "/start@YourBot" 形式

@@ -30,7 +30,8 @@ inline bool isPermanentError(long errorCode) {
 
 // 默认订阅的 update 类型。需要 edited_message / chat_member / inline_query
 // 等类型时要显式传别的值（Bot API 规定不传会沿用上一次的设置）
-inline constexpr char kDefaultAllowedUpdates[] = R"(["message","callback_query"])";
+inline constexpr char kDefaultAllowedUpdates[] =
+    R"(["message","callback_query","pre_checkout_query"])";
 
 // 重试策略：
 // - kDefault：429 / 5xx / 传输错误都重试（只读方法用，重试无副作用）
@@ -128,6 +129,10 @@ public:
     boost::asio::awaitable<void> answerCallbackQuery(const std::string& callbackQueryId,
                                                      const std::string& text = "",
                                                      bool showAlert = false);
+    // 回答 Telegram Stars 的 pre_checkout_query；ok=false 时 errorMessage 会展示给用户
+    boost::asio::awaitable<void> answerPreCheckoutQuery(const std::string& queryId,
+                                                        bool ok,
+                                                        const std::string& errorMessage = "");
     // 删除消息；失败（已删除/太老/无权限）抛 TelegramApiError
     boost::asio::awaitable<nlohmann::json> deleteMessage(std::int64_t chatId,
                                                          std::int64_t messageId);

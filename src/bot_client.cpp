@@ -305,6 +305,18 @@ net::awaitable<void> BotClient::answerCallbackQuery(const std::string& callbackQ
     co_await apiCall("answerCallbackQuery", std::move(params), RetryPolicy::kNoTransportRetry);
 }
 
+net::awaitable<void> BotClient::answerPreCheckoutQuery(const std::string& queryId,
+                                                       bool ok,
+                                                       const std::string& errorMessage) {
+    std::map<std::string, std::string> params{
+        {"pre_checkout_query_id", queryId}, {"ok", ok ? "true" : "false"}};
+    if (!ok && !errorMessage.empty()) {
+        params.emplace("error_message", errorMessage);
+    }
+    co_await apiCall("answerPreCheckoutQuery", std::move(params),
+                     RetryPolicy::kNoTransportRetry);
+}
+
 net::awaitable<json> BotClient::deleteMessage(std::int64_t chatId, std::int64_t messageId) {
     co_await limiter_.beforeSend(chatId);
     co_return co_await apiCall(

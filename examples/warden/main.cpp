@@ -31,6 +31,7 @@
 #include "health.hpp"
 #include "ignore.hpp"
 #include "media.hpp"
+#include "platform_client.hpp"
 #include "replies.hpp"
 #include "scheduler.hpp"
 #include "store.hpp"
@@ -224,6 +225,53 @@ net::awaitable<int> run(Config cfg) {
 
     tgbot::Dispatcher dispatcher;
     dispatcher.setBotUsername(botUsername);
+
+    const PlatformClient platformClient{cfg.platformUrl, cfg.platformInternalToken};
+    if (platformClient.enabled()) {
+        spdlog::info("platform payment bridge enabled: {}", cfg.platformUrl);
+        dispatcher.onPreCheckout(
+            [platformClient](BotClient& b, json query) -> net::awaitable<void> {
+                const auto payload = query.value("invoice_payload", std::string{});
+                const auto queryId = query.value("id", std::string{});
+                bool ok = false;
+                std::string error = "payment is temporarily unavailable";
+                try {
+                    const auto response = co_await platformClient.post(
+                        "/internal/telegram/precheckout", {{"payload", payload}});
+                    ok = response.value("ok", false);
+                } catch (const std::exception& e) {
+                    spdlog::error("pre_checkout platform validation failed: {}", e.what());
+                }
+                try {
+                    co_await b.answerPreCheckoutQuery(queryId, ok, ok ? "" : error);
+                } catch (const std::exception& e) {
+                    spdlog::error("answerPreCheckoutQuery failed: {}", e.what());
+                }
+            });
+
+        dispatcher.onSuccessfulPayment(
+            [platformClient](BotClient&, json msg) -> net::awaitable<void> {
+                const auto payment = msg.value("successful_payment", json::object());
+                const auto payload = payment.value("invoice_payload", std::string{});
+                const auto chargeId = payment.value("telegram_payment_charge_id", std::string{});
+                const auto amount = payment.value("total_amount", std::int64_t{0});
+                const auto currency = payment.value("currency", std::string{});
+                try {
+                    const auto response = co_await platformClient.post(
+                        "/internal/telegram/payment",
+                        {{"payload", payload},
+                         {"charge_id", chargeId},
+                         {"amount", amount},
+                         {"currency", currency}});
+                    spdlog::info("Stars payment accepted: order={} charge={} ok={}",
+                                 payload,
+                                 chargeId,
+                                 response.value("ok", false));
+                } catch (const std::exception& e) {
+                    spdlog::error("successful_payment platform forwarding failed: {}", e.what());
+                }
+            });
+    }
 
     // 群内所有命令仅群管理员可用；非管理员静默丢弃（连"没权限"都不回，
     // 避免陌生人用 /autodel 试探群设置）。私聊命令不受影响。

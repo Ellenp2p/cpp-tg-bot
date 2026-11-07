@@ -155,6 +155,8 @@ $env:WARDEN_HEALTH_PORT = "9091"
 | `WARDEN_LOG_DIR` | `logs` | 日志目录 |
 | `WARDEN_LOG_LEVEL` | `info` | `debug/info/warn/error` |
 | `WARDEN_INSTANCE` | 自动 | 实例 ID |
+| `WARDEN_PLATFORM_URL` | 空 | warden-platform 地址，如 `http://127.0.0.1:18081` |
+| `WARDEN_PLATFORM_INTERNAL_TOKEN` | 空 | 平台内部 token；与平台同值才启用支付桥接 |
 | `WARDEN_HEALTH_HOST` | `127.0.0.1` | health 监听地址 |
 | `WARDEN_HEALTH_PORT` | `9090` | health/metrics 端口；`0` 关闭 |
 | `WARDEN_CONTROL_TOKEN` | 空 | `POST /drain` 的 token；空 = 禁用 |
@@ -184,6 +186,21 @@ $env:WARDEN_HEALTH_PORT = "9091"
 
 布尔值支持 `true/false`、`1/0`、`yes/no`、`on/off`。完整配置见
 [config.hpp](config.hpp)。
+
+### Stars 支付桥接
+
+配置 `WARDEN_PLATFORM_URL` 和 `WARDEN_PLATFORM_INTERNAL_TOKEN` 后，Warden
+会处理：
+
+```text
+pre_checkout_query  → POST /internal/telegram/precheckout
+successful_payment  → POST /internal/telegram/payment
+```
+
+平台用 `createInvoiceLink` 生成 Stars 支付链接，Mini App 调用
+`Telegram.WebApp.openInvoice`。支付成功后平台写订单和权益。
+
+这两个变量为空时，Warden 保持原有独立运行行为，不参与支付。
 
 ## 数据与回滚
 
