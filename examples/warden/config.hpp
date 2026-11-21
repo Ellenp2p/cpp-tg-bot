@@ -18,7 +18,7 @@
 namespace warden {
 
 #ifndef WARDEN_VERSION
-#define WARDEN_VERSION "0.2.2"
+#define WARDEN_VERSION "0.2.3"
 #endif
 inline constexpr char kWardenVersion[] = WARDEN_VERSION;
 
